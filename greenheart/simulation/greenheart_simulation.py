@@ -1182,6 +1182,8 @@ def run_simulation(config: GreenHeartSimulationConfig):
                 # iron_pre_performance, iron_pre_costs, iron_pre_finance = \
                 #     run_iron_full_model(iron_pre_config)
 
+                if iron_win_config["project_parameters"]["cost_year"] == 2021:
+                    iron_win_config["project_parameters"]["cost_year"] = 2022
                 iron_transport_cost_tonne, ore_profit_pct = calc_iron_ship_cost(iron_win_config)
 
                 ### DRI ----------------------------------------------------------------------------
@@ -1245,7 +1247,7 @@ def run_simulation(config: GreenHeartSimulationConfig):
         else:
             ammonia_finance = {}
 
-    gh_fio.save_iron_results(config, iron_performance, iron_costs, iron_finance)
+    gh_fio.save_iron_results(config, iron_performance, iron_costs, iron_finance, product_selection=iron_win_config["iron"]["product_selection"])
 
     ################# end OSW intermediate calculations
     if config.post_processing:
@@ -1278,20 +1280,21 @@ def run_simulation(config: GreenHeartSimulationConfig):
             output_dir=config.output_dir,
         )  # , lcoe, lcoh, lcoh_with_grid, lcoh_grid_only)
 
-    if iron_config["lca_config"]["run_lca"]:
-        lca_df = calculate_lca(
-            wind_annual_energy_kwh,
-            solar_pv_annual_energy_kwh,
-            0,
-            hydrogen_amount_kgpy,
-            hydrogen_annual_energy_kwh,
-            config.hopp_config,
-            config.greenheart_config,
-            0,
-            0,
-            plant_design_scenario_number=9,
-            incentive_option_number=1,
-        )
+    if "lca_config" in iron_config:
+        if iron_config["lca_config"]["run_lca"]:
+            lca_df = calculate_lca(
+                wind_annual_energy_kwh,
+                solar_pv_annual_energy_kwh,
+                0,
+                hydrogen_amount_kgpy,
+                hydrogen_annual_energy_kwh,
+                config.hopp_config,
+                config.greenheart_config,
+                0,
+                0,
+                plant_design_scenario_number=9,
+                incentive_option_number=1,
+            )
 
     # return
     if config.output_level == 0:
@@ -1330,19 +1333,21 @@ def run_simulation(config: GreenHeartSimulationConfig):
             i in config.greenheart_config
             for i in ["iron", "iron_pre", "iron_pre", "iron_win", "iron_post"]
         ):
-            if "ng" in iron_config["iron_win"]["product_selection"]:
+            product_selection = iron_config["iron_win"]["product_selection"]
+            if "ng" in product_selection:
                 LCA_label = "NG DRI Total Lifetime Average GHG Emissions (kg-CO2e/MT steel)"
-            elif "h2" in iron_config["iron_win"]["product_selection"]:
+            elif "h2" in product_selection:
                 LCA_label = (
                     "H2 DRI Electrolysis Total Lifetime Average GHG Emissions (kg-CO2e/MT steel)"
                 )
-            if iron_config["lca_config"]["run_lca"]:
-                gh_fio.save_iron_results(
-                    config, iron_performance, iron_costs, iron_finance, lca_df[LCA_label].values[0]
-                )
-                ammonia_finance = lca_df[LCA_label].values[
-                    0
-                ]  # repurposing ammonia finance to hold CI
+            if "lca_config" in iron_config:
+                if iron_config["lca_config"]["run_lca"]:
+                    gh_fio.save_iron_results(
+                        config, iron_performance, iron_costs, iron_finance, product_selection, lca_df[LCA_label].values[0]
+                    )
+                    ammonia_finance = lca_df[LCA_label].values[
+                        0
+                    ]  # repurposing ammonia finance to hold CI
             return lcoe, lcoh, iron_finance, ammonia_finance
         else:
             return lcoe, lcoh, steel_finance, ammonia_finance

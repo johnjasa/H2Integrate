@@ -110,11 +110,10 @@ def save_iron_ore_results(
         dump_data_to_pickle(data, output_filepath)
 
 
-def save_iron_results(config, iron_performance, iron_costs, iron_finance, iron_CI=None):
+def save_iron_results(config, iron_performance, iron_costs, iron_finance, product_selection=None, iron_CI=None):
     lat = config.hopp_config["site"]["data"]["lat"]
     lon = config.hopp_config["site"]["data"]["lon"]
     year = config.hopp_config["site"]["data"]["year"]
-    product_selection = iron_win_config['iron']['product_selection']
     site_res_id = f"{lat:.3f}_{lon:.3f}_{year}_{product_selection}"
     pkl_fn = site_res_id + ".pkl"
 
