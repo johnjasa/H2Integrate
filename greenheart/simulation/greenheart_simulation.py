@@ -1201,7 +1201,8 @@ def run_simulation(config: GreenHeartSimulationConfig):
                 lat = perf_ds['Latitude']
                 lon = perf_ds['Longitude']
                 year = config.hopp_config['site']['data']['year']
-                site_res_id = "{:.3f}_{:.3f}_{:d}".format(lat,lon,year)
+                product_selection = iron_ore_config['iron']['product_selection']
+                site_res_id = f"{lat:.3f}_{lon:.3f}_{year}_{product_selection}"
                 ore_pkl_fn = site_res_id+".pkl"
                 output_names = ["iron_ore_performance","iron_ore_costs","iron_ore_finance"]
                 paths = [config.iron_out_fn+'/'+i+'/' for i in output_names]
@@ -1225,6 +1226,13 @@ def run_simulation(config: GreenHeartSimulationConfig):
                 iron_costs = iron_win_costs
                 iron_finance = iron_win_finance
 
+            # TODO: update lat-lon to correct iron processing site
+            lat = config.hopp_config["site"]["data"]["lat"]
+            lon = config.hopp_config["site"]["data"]["lon"]
+            year = config.hopp_config['site']['data']['year']
+            product_selection = iron_win_config['iron']['product_selection']
+            site_res_id = f"{lat:.3f}_{lon:.3f}_{year}_{product_selection}"
+            pkl_fn = site_res_id+".pkl"
             output_names = ["iron_performance","iron_costs","iron_finance"]
             paths = [config.iron_out_fn+'/'+i+'/' for i in output_names]
             for i, path in enumerate(paths):
