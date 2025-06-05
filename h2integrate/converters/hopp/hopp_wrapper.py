@@ -52,7 +52,10 @@ class HOPPSubGroup(om.Group):
                     self.set_input_defaults(v, val=0.0, units="kW")
 
         if np.any(["battery" in v for v in design_variables]):
-            batt_str = "battery_duration = battery_capacity_kwh/battery_capacity_kw"
+            batt_str = (
+                "battery_duration = battery_capacity_kwh/battery_capacity_kw "
+                "if battery_capacity_kw > 0.001 else 0.0"
+            )
             batt_kw = hopp_config["technologies"]["battery"]["system_capacity_kw"]
             batt_kwh = hopp_config["technologies"]["battery"]["system_capacity_kwh"]
             self.add_subsystem(
