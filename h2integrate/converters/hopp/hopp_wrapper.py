@@ -160,10 +160,16 @@ class HOPPComponent(om.ExplicitComponent):
         outputs["CapEx"] = subset_of_hopp_results["capex"]
         outputs["OpEx"] = subset_of_hopp_results["opex"]
 
+        # Calculate battery duration if battery technology is present
         if "battery" in self.hopp_config["technologies"]:
-            outputs["battery_duration"] = (
-                inputs["battery_capacity_kwh"] / inputs["battery_capacity_kw"]
-            )
+            # If battery power capacity is near zero, set duration to zero to avoid division by zero
+            if abs(inputs["battery_capacity_kw"]) < 1.0e-3:
+                outputs["battery_duration"] = 0.0
+            else:
+                # Battery duration = energy capacity (kWh) / power capacity (kW)
+                outputs["battery_duration"] = (
+                    inputs["battery_capacity_kwh"] / inputs["battery_capacity_kw"]
+                )
 
         if "desired_schedule" in self.hopp_config["site"]:
             uphours = np.count_nonzero(self.hopp_config["site"]["desired_schedule"])
