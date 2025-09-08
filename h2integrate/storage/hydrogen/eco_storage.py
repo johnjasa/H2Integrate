@@ -38,21 +38,21 @@ class H2Storage(om.ExplicitComponent):
         )
         self.add_input(
             "hydrogen_in",
-            val=0.0,
+            val=1.0,
             shape_by_conn=True,
             units="kg/h",
         )
 
         self.add_input(
             "rated_h2_production_kg_pr_hr",
-            val=0.0,
+            val=1.0,
             units="kg/h",
             desc="Rated hydrogen production of electrolyzer",
         )
-        self.add_input("efficiency", val=0.0, desc="Average efficiency of the electrolyzer")
+        self.add_input("efficiency", val=1.0, desc="Average efficiency of the electrolyzer")
 
-        self.add_output("CapEx", val=0.0, units="USD", desc="Capital expenditure")
-        self.add_output("OpEx", val=0.0, units="USD/year", desc="Operational expenditure")
+        self.add_output("CapEx", val=1.0, units="USD", desc="Capital expenditure")
+        self.add_output("OpEx", val=1.0, units="USD/year", desc="Operational expenditure")
 
     def compute(self, inputs, outputs):
         self.options["tech_config"]
@@ -118,6 +118,8 @@ class H2Storage(om.ExplicitComponent):
             storage_input["h2_storage_kg"] = h2_storage_capacity_kg
             storage_input["system_flow_rate"] = storage_max_fill_rate
             storage_input["model"] = "papadias"
+
+            print(storage_input)
 
             # run salt cavern storage model
             h2_storage = SaltCavernStorage(storage_input)
@@ -206,3 +208,5 @@ class H2Storage(om.ExplicitComponent):
 
         outputs["CapEx"] = h2_storage_results["storage_capex"]
         outputs["OpEx"] = h2_storage_results["storage_opex"]
+
+        print(h2_storage_results)

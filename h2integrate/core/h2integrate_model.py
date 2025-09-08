@@ -391,7 +391,7 @@ class H2IntegrateModel:
                 )
                 financial_group.add_subsystem(f"profast_comp_{idx}", profast_comp, promotes=["*"])
 
-            self.plant.add_subsystem(f"financials_group_{group_id}", financial_group)
+            self.model.add_subsystem(f"financials_group_{group_id}", financial_group)
 
         self.financial_groups = financial_groups
 
@@ -573,7 +573,7 @@ class H2IntegrateModel:
                 # and in this financial group
                 for tech_name in tech_configs.keys():
                     if tech_name in electricity_producing_techs and tech_name in all_included_techs:
-                        self.plant.connect(
+                        self.model.connect(
                             f"{tech_name}.electricity_out",
                             f"financials_group_{group_id}.electricity_sum.electricity_{tech_name}",
                         )
@@ -581,7 +581,7 @@ class H2IntegrateModel:
 
                 if plant_producing_electricity:
                     # Connect total electricity produced to the financial group
-                    self.plant.connect(
+                    self.model.connect(
                         f"financials_group_{group_id}.electricity_sum.total_electricity_produced",
                         f"financials_group_{group_id}.total_electricity_produced",
                     )
@@ -589,36 +589,36 @@ class H2IntegrateModel:
                 # Only connect technologies that are included in the financial stackup
                 for tech_name in tech_configs.keys():
                     if tech_name in all_included_techs:
-                        self.plant.connect(
+                        self.model.connect(
                             f"{tech_name}.CapEx", f"financials_group_{group_id}.capex_{tech_name}"
                         )
-                        self.plant.connect(
+                        self.model.connect(
                             f"{tech_name}.OpEx", f"financials_group_{group_id}.opex_{tech_name}"
                         )
 
                         if "electrolyzer" in tech_name:
-                            self.plant.connect(
+                            self.model.connect(
                                 f"{tech_name}.total_hydrogen_produced",
                                 f"financials_group_{group_id}.total_hydrogen_produced",
                             )
-                            self.plant.connect(
+                            self.model.connect(
                                 f"{tech_name}.time_until_replacement",
                                 f"financials_group_{group_id}.time_until_replacement",
                             )
 
                         if "ammonia" in tech_name:
-                            self.plant.connect(
+                            self.model.connect(
                                 f"{tech_name}.total_ammonia_produced",
                                 f"financials_group_{group_id}.total_ammonia_produced",
                             )
 
                         if "doc" in tech_name:
-                            self.plant.connect(
+                            self.model.connect(
                                 f"{tech_name}.co2_capture_mtpy",
                                 f"financials_group_{group_id}.co2_capture_kgpy",
                             )
                         if "air_separator" in tech_name:
-                            self.plant.connect(
+                            self.model.connect(
                                 f"{tech_name}.total_nitrogen_produced",
                                 f"financials_group_{group_id}.total_nitrogen_produced",
                             )

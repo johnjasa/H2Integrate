@@ -7,6 +7,7 @@ from h2integrate.tools.eco.utilities import ceildiv
 from h2integrate.converters.ammonia.ammonia_synloop import size_hydrogen
 from h2integrate.converters.hydrogen.electrolyzer_baseclass import ElectrolyzerPerformanceBaseClass
 from h2integrate.simulation.technologies.hydrogen.electrolysis.PEM_tools import (
+    check_capacity_based_on_clusters,
     size_electrolyzer_for_hydrogen_demand,
 )
 from h2integrate.simulation.technologies.hydrogen.electrolysis.run_h2_PEM import run_h2_PEM
@@ -100,19 +101,24 @@ class ECOElectrolyzerPerformanceModel(ElectrolyzerPerformanceBaseClass):
             merge_shared_inputs(self.options["tech_config"]["model_inputs"], "performance"),
             strict=False,
         )
-        self.add_output("efficiency", val=0.0, desc="Average efficiency of the electrolyzer")
-        self.add_output(
-            "rated_h2_production_kg_pr_hr",
-            val=0.0,
-            units="kg/h",
-            desc="Rated hydrogen production of system in kg/hour",
-        )
 
         self.add_input(
             "n_clusters",
             val=self.config.n_clusters,
             units="unitless",
             desc="number of electrolyzer clusters in the system",
+        )
+        self.add_input(
+            "electricity_in", val=0.0, shape_by_conn=True, copy_shape="hydrogen_out", units="kW"
+        )
+        self.add_input("max_hydrogen_capacity", val=1.0, units="kg/h")
+
+        self.add_output("efficiency", val=1.0, desc="Average efficiency of the electrolyzer")
+        self.add_output(
+            "rated_h2_production_kg_pr_hr",
+            val=0.0,
+            units="kg/h",
+            desc="Rated hydrogen production of system in kg/hour",
         )
 
         self.add_output(
@@ -122,10 +128,6 @@ class ECOElectrolyzerPerformanceModel(ElectrolyzerPerformanceBaseClass):
             desc="Size of the electrolyzer in MW",
         )
 
-        self.add_input(
-            "electricity_in", val=0.0, shape_by_conn=True, copy_shape="hydrogen_out", units="kW"
-        )
-        self.add_input("max_hydrogen_capacity", val=1.0, units="kg/h")
         self.add_output(
             "hydrogen_out",
             val=0.0,
@@ -204,6 +206,9 @@ class ECOElectrolyzerPerformanceModel(ElectrolyzerPerformanceBaseClass):
                     raise ValueError(f"Cannot find a connection to '{self.config.resize_by_tech}'")
                 else:
                     electrolyzer_size_mw = size_electrolyzer_for_hydrogen_demand(h2_kgphr)
+                    electrolyzer_size_mw = check_capacity_based_on_clusters(
+                        electrolyzer_size_mw, self.config.cluster_rating_MW
+                    )
             else:
                 raise ValueError(f"Cannot resize for '{self.config.resize_by_flow}' product")
         else:
@@ -234,6 +239,24 @@ class ECOElectrolyzerPerformanceModel(ElectrolyzerPerformanceBaseClass):
             debug_mode=False,
             verbose=False,
         )
+
+        print("Inputs to run_h2_PEM:")
+        print("electrical_generation_timeseries:", np.linalg.norm(energy_to_electrolyzer_kw))
+        print("electrolyzer_size:", electrolyzer_size_mw)
+        print("useful_life:", plant_life)
+        print("n_pem_clusters:", n_pem_clusters)
+        print("pem_control_type:", self.config.pem_control_type)
+        print("electrolyzer_direct_cost_kw:", electrolyzer_capex_kw)
+        print("user_defined_pem_param_dictionary:", pem_param_dict)
+        print("grid_connection_scenario:", grid_connection_scenario)
+        print(
+            "hydrogen_production_capacity_required_kgphr:",
+            hydrogen_production_capacity_required_kgphr,
+        )
+        print("debug_mode:", False)
+        print("verbose:", False)
+
+        print(H2_Results)
 
         # Assuming `h2_results` includes hydrogen and oxygen rates per timestep
         outputs["hydrogen_out"] = H2_Results["Hydrogen Hourly Production [kg/hr]"]

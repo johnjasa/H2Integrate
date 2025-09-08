@@ -330,6 +330,9 @@ class ProFastComp(om.ExplicitComponent):
                 cost=float(inputs[f"opex_adjusted_{tech}"][0]),
                 escalation=gen_inflation,
             )
+            print(tech)
+            print(inputs[f"capex_adjusted_{tech}"])
+            print(inputs[f"opex_adjusted_{tech}"])
 
         # ------------------------------------ solve and post-process -----------------------------
 
