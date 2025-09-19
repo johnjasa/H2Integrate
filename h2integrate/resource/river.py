@@ -96,7 +96,7 @@ class RiverResource(om.ExplicitComponent):
         df_hourly = df_hourly.reset_index()
 
         # Forward fill NaN values with the last valid observation
-        df_hourly = df_hourly.ffill(limit=1)
+        df_hourly = df_hourly.ffill(limit=50)
 
         # Check if the output length matches 8760
         if len(df_hourly) != 8760:

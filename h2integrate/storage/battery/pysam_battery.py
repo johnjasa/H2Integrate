@@ -237,7 +237,8 @@ class PySAMBatteryPerformanceModel(BatteryPerformanceBaseClass):
         input for Pyomo solver integration.
         """
         self.config = PySAMBatteryPerformanceModelConfig.from_dict(
-            merge_shared_inputs(self.options["tech_config"]["model_inputs"], "performance")
+            merge_shared_inputs(self.options["tech_config"]["model_inputs"], "performance"),
+            strict=False,
         )
 
         self.add_input(
