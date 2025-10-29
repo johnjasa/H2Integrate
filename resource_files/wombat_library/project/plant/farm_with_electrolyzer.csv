@@ -1,0 +1,12 @@
+﻿id,substation_id,name,type,longitude,latitude,string,order,distance,subassembly,upstream_cable
+SS1,SS2,SS1,substation,-121.6445116,35.40616396,9,0,,corewind_substation.yaml,corewind_export.yaml
+SS2,SS2,SS2,substation,-121.6458132,35.32827984,9,1,,corewind_substation.yaml,corewind_export.yaml
+ELC1,SS2,ELC1,electrolyzer,-120.881128,35.3735572,9,2,,electrolyzer.yaml,corewind_export.yaml
+WTG_0000,SS1,WTG_0000,turbine,-121.6678132,35.4356351,0,0,,corewind_15MW.yaml,corewind_array.yaml
+WTG_0001,SS1,WTG_0001,turbine,-121.6916045,35.43589529,0,1,,corewind_15MW.yaml,corewind_array.yaml
+WTG_0002,SS1,WTG_0002,turbine,-121.7153961,35.43615079,0,2,,corewind_15MW.yaml,corewind_array.yaml
+WTG_0003,SS1,WTG_0003,turbine,-121.739188,35.43640161,0,3,,corewind_15MW.yaml,corewind_array.yaml
+WTG_0100,SS2,WTG_0100,turbine,-121.6690938,35.35775062,1,0,,corewind_15MW.yaml,corewind_array.yaml
+WTG_0101,SS2,WTG_0401,turbine,-121.6928623,35.35801007,1,1,,corewind_15MW.yaml,corewind_array.yaml
+WTG_0102,SS2,WTG_0402,turbine,-121.7166311,35.35826484,1,2,,corewind_15MW.yaml,corewind_array.yaml
+WTG_0103,SS2,WTG_0403,turbine,-121.7404001,35.35851493,1,3,,corewind_15MW.yaml,corewind_array.yaml

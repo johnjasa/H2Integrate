@@ -1,0 +1,19 @@
+capacity_kw: 15000
+capex_kw: 120
+transformer:
+  name: transformer
+  maintenance:
+  - description: na
+    time: 0
+    materials: 0
+    service_equipment: OFS
+    frequency: 0
+  failures:
+  - scale: 0
+    shape: 0
+    time: 0
+    materials: 0
+    service_equipment: OFS
+    operation_reduction: 0
+    level: 1
+    description: na

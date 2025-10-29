@@ -1,0 +1,25 @@
+name: Onsite Truck
+equipment_rate: 50
+capability: OFS
+speed: 37.04  # 20 knots
+strategy: requests
+strategy_threshold: 1
+max_windspeed_transport: 10
+max_windspeed_repair: 10
+max_waveheight_transport: 99
+max_waveheight_repair: 99
+onsite: false
+mobilization_cost: 1500
+mobilization_days: 1
+charter_days: 20
+port_distance: 30
+# workday_start: 0
+# workday_end: 24
+crew_transfer_time: 0.25
+n_crews: 1
+crew:
+  day_rate: 219.18  # 80K/yr / 365 days
+  n_day_rate: 3  # Most tasks are 2, but some larger ones are 3, 4, or 5, so averaging
+  hourly_rate: 0
+  n_hourly_rate: 0
+# capex: 3000000

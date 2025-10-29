@@ -1,0 +1,4 @@
+﻿id,substation_id,name,type,longitude,latitude,string,order,distance,subassembly,upstream_cable
+SS1,SS1,SS1,substation,-121.6445116,35.40616396,9,0,,no_fail_substation.yaml,no_fail_export.yaml
+ELC1,SS1,ELC1,electrolyzer,-120.881128,35.3735572,9,2,,decrease_materials.yaml,no_fail_export.yaml
+WTG_0000,SS1,WTG_0000,turbine,-121.6678132,35.4356351,0,0,,no_fail_15MW.yaml,no_fail_array.yaml

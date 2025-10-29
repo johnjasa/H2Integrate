@@ -1,0 +1,22 @@
+capacity_kw: 15000
+capex_kw: 1300
+power_curve:
+  file: 2020ATB_NREL_Reference_15MW_240.csv
+  bin_width: 0.5
+turbine:
+  name: electrical_system
+  maintenance:
+  - description: n/a
+    time: 0
+    materials: 0
+    service_equipment: OFS
+    frequency: 0
+  failures:
+  - scale: 0
+    shape: 0
+    time: 0
+    materials: 0
+    service_equipment: OFS
+    operation_reduction: 0.0
+    level: 1
+    description: na

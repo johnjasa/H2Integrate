@@ -1,0 +1,25 @@
+name: Specialist
+equipment_rate: 20
+capability: OFS
+speed: 50
+strategy: requests
+strategy_threshold: 1
+mobilization: 0
+mobilization_days: 2
+charter_days: 1
+max_windspeed_transport: 16
+max_windspeed_repair: 16
+max_waveheight_transport: 99
+max_waveheight_repair: 99
+onsite: false
+crew_transfer_time: 0
+n_crews: 1
+crew:
+  day_rate: 0
+  n_day_rate: 0
+  hourly_rate: 96
+  n_hourly_rate: 3
+
+# QC/QA tech: 2 x 90
+# Electrician: 1 x 90
+# Per Diem (144/day) added to hourly rate as 6/hr

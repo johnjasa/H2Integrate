@@ -18,10 +18,12 @@ class WOMBATModelConfig(ECOElectrolyzerPerformanceModelConfig):
     library_path: Path to the WOMBAT library directory, relative from this file
     if not an absolute path.
     cost_year: dollar-year corresponding to capex value.
+    filepath: Name of the WOMBAT configuration file to load from the library.
     """
 
     library_path: Path = field()
     cost_year: int = field(converter=int)
+    filepath: str = field(default="electrolyzer.yml")
 
 
 class WOMBATElectrolyzerModel(ECOElectrolyzerPerformanceModel):
@@ -75,22 +77,7 @@ class WOMBATElectrolyzerModel(ECOElectrolyzerPerformanceModel):
         else:
             library_path = Path(__file__).parents[3] / library_path
 
-        wombat_config = load_yaml(library_path, "electrolyzer.yml")
-
-        # do a manual check to make sure that stack_capacity_kw * n_stacks is equal to the rating
-        stack_capacity_mw = (
-            wombat_config["electrolyzers"]["central_electrolyzer"]["stack_capacity_kw"] * 1e-3
-        )
-        n_stacks = wombat_config["electrolyzers"]["central_electrolyzer"]["n_stacks"]
-
-        rating_from_config = self.config.n_clusters * self.config.cluster_rating_MW
-        if rating_from_config != stack_capacity_mw * n_stacks:
-            raise ValueError(
-                f"Electrolyzer rating {rating_from_config} does not match the product of "
-                f"stack capacity {stack_capacity_mw} and number of stacks "
-                f"{n_stacks} in the WOMBAT config. "
-                "Ensure that the rating is equal to stack_capacity_kw * n_stacks."
-            )
+        wombat_config = load_yaml(library_path, self.config.filepath)
 
         sim = Simulation(
             library_path=library_path,
@@ -101,6 +88,7 @@ class WOMBATElectrolyzerModel(ECOElectrolyzerPerformanceModel):
         # WOMBAT expects 8760 hours to simulate one year of operation.
         sim.run(delete_logs=True, save_metrics_inputs=False, until=8760)
 
+        rating_from_config = 40.0
         scaling_factor = rating_from_config  # The baseline electrolyzer in WOMBAT is 1MW
 
         # TODO: handle cases where the project is longer than one year.

@@ -1,0 +1,13 @@
+name: Decrease Materials Cost
+weather: carbon_county.csv
+service_equipment:
+  - truck.yaml
+layout: decrease_materials.csv
+port_distance: 60  # 20/100 for West of Barra Island; 10 for Gran Canaria Island
+inflation_rate: 0
+workday_start: 6
+workday_end: 22
+start_year: 2002
+end_year: 2021
+maintenance_start: "6/1/2002"
+project_capacity: 15

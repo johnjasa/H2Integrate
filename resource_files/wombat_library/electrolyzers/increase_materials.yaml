@@ -1,0 +1,356 @@
+stack_capacity_kw: 1000
+capex_kw: 1295
+n_stacks: 1
+power_curve:
+  p1: 4.0519644766515644e-08
+  p2: -0.00026186723338675105
+  p3: 3.8985774154190334
+  p4: 7.615382921418666
+  p5: -20.075110413404484
+  FE: 0.9999999
+  n_cells: 135
+  turndown_ratio: 0.1
+Cathode:
+  name: Cathode
+  maintenance:
+  - description: H2 HIGH PRESSURE SEPARATOR DRAIN FILTER
+    time: 0.5
+    materials: 2201.25
+    service_equipment: CTV
+    frequency: 1
+    frequency_basis: years
+  - description: Particulate filter pre-backpressure regulator
+    time: 0.75
+    materials: 950.0
+    service_equipment: CTV
+    frequency: 1
+    frequency_basis: years
+  - description: Nitrogen purge filter
+    time: 0.75
+    materials: 233.0625
+    service_equipment: CTV
+    frequency: 365
+  - description: High Pressure H2 Separator level sensor
+    time: 60
+    materials: 3725.0
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Stack H2 output pressure switch
+    time: 2
+    materials: 487.98749999999995
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Nitrogen purge pressure sensor
+    time: 2
+    materials: 833.75
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Pilot relief valve
+    time: 2
+    materials: 375.0
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: High Pressure H2 Separator relief valve
+    time: 2
+    materials: 837.5
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Condensate drain trap actuation sensor
+    time: 1
+    materials: 220.0
+    service_equipment: CTV
+    frequency: 1825
+  - description: Stack H2 output pressure transudcer
+    time: 1
+    materials: 833.75
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Nitrogen pilot pressure transducer
+    time: 1
+    materials: 833.75
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Pre-H2 HX hydrogen temperature sensor
+    time: 1
+    materials: 145.0
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Post-H2 HX hydrogen temperature sensor
+    time: 1
+    materials: 145.0
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Stack H2 output temperature transducer
+    time: 1
+    materials: 353.75
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  failures:
+  - scale: 0
+    shape: 0
+    time: 0
+    materials: 0
+    service_equipment:
+    - CTV
+    operation_reduction: 0
+    level: 1
+    description: n/a
+Cooling:
+  name: Cooling
+  maintenance:
+  - description: SCW thermal expansion relief valve
+    time: 2
+    materials: 234.3875
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Pressure sensor before heat exchanger
+    time: 1
+    materials: 761.25
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Replacement pressure sensor for water
+    time: 1
+    materials: 788.75
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Coolant Post Heat exchanger Pressure Transducer
+    time: 1
+    materials: 253.97500000000002
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Pre heat exchanger Temperature Sensor
+    time: 1
+    materials: 225.0
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Post Heat exchanger Temperature Sensor
+    time: 1
+    materials: 225.0
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Coolant Temperature Sensor
+    time: 1
+    materials: 153.75
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  failures:
+  - scale: 0
+    shape: 0
+    time: 0
+    materials: 0
+    service_equipment:
+    - CTV
+    operation_reduction: 0
+    level: 1
+    description: n/a
+DI Water:
+  name: DI Water
+  maintenance:
+  - description: DI water pump (polish)
+    time: 1
+    materials: 62.5
+    service_equipment: CTV
+    frequency: 2
+    frequency_basis: years
+  - description: DI water pump
+    time: 1
+    materials: 62.5
+    service_equipment: CTV
+    frequency: 2
+    frequency_basis: years
+  - description: DI particulate filter cartridge vessel line A
+    time: 1
+    materials: 95.0
+    service_equipment: CTV
+    frequency: 1
+    frequency_basis: years
+  - description: DI particulate filter cartridge vessel line A
+    time: 1
+    materials: 95.0
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Main DI water filter cartridge
+    time: 0.75
+    materials: 95.0
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Anode-cooling Ultrasonic flowmeter
+    time: 2
+    materials: 8300.0
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Flood detector
+    time: 2
+    materials: 526.95
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: In-tank resistivity sensor
+    time: 2
+    materials: 1597.5
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Pre-stack resistivity sensor
+    time: 2
+    materials: 858.75
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Pressure safety valve (H2O)
+    time: 2
+    materials: 625.0
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Pre-Heat Exchange Pressure Transducer
+    time: 1
+    materials: 788.75
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Pre-stack Pressure Transducer
+    time: 1
+    materials: 788.75
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: In-tank DI temperature sensors
+    time: 1
+    materials: 651.25
+    service_equipment: CTV
+    frequency: 1825
+  - description: In-Line DI temperature sensors
+    time: 1
+    materials: 596.25
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  failures:
+  - scale: 0
+    shape: 0
+    time: 0
+    materials: 0
+    service_equipment:
+    - CTV
+    operation_reduction: 0
+    level: 1
+    description: n/a
+Anode:
+  name: Anode
+  maintenance:
+  - description: Vacuum eductor air supply filter
+    time: 1
+    materials: 51.25
+    service_equipment: CTV
+    frequency: 1
+    frequency_basis: years
+  - description: Hydrogen in oxygen sensor
+    time: 1
+    materials: 62.5
+    service_equipment: CTV
+    frequency: 3
+    frequency_basis: months
+  - description: O2 separator water level switches
+    time: 1
+    materials: 1693.75
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: O2 separator pressure relief vent
+    time: 1
+    materials: 112.5
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Post-stack pressure transducer
+    time: 1
+    materials: 621.25
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: O2 separator vapor space pressure
+    time: 1
+    materials: 993.75
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Vacuum eductor supply pressure transducer
+    time: 1
+    materials: 846.25
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: Anode-cooling Post-stack temperature sensors
+    time: 1
+    materials: 187.5
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  failures:
+  - scale: 0
+    shape: 0
+    time: 0
+    materials: 0
+    service_equipment:
+    - CTV
+    operation_reduction: 0
+    level: 1
+    description: n/a
+power_system:
+  name: Power System
+  maintenance:
+  - description: DC current transducer
+    time: 36
+    materials: 606.25
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: DC Power Supply
+    time: 36
+    materials: 45250.0
+    service_equipment: CTV
+    frequency: 1
+    frequency_basis: years
+  - description: PEM Stack
+    time: 7
+    materials: 95737.5
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  - description: DC Voltage Transducer
+    time: 36
+    materials: 326.25
+    service_equipment: CTV
+    frequency: 5
+    frequency_basis: years
+  failures:
+  - scale: 0
+    shape: 0
+    time: 0
+    materials: 0
+    service_equipment:
+    - CTV
+    operation_reduction: 0
+    level: 1
+    description: n/a
