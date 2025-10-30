@@ -9,5 +9,5 @@ workday_start: 6
 workday_end: 22
 start_year: 2002
 end_year: 2021
-maintenance_start: "6/1/2002"
+maintenance_start: "6/1/2001"
 project_capacity: 15

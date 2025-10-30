@@ -85,10 +85,9 @@ class WOMBATElectrolyzerModel(ECOElectrolyzerPerformanceModel):
             random_seed=314,
         )
 
+        project_length = int(self.options["plant_config"]["plant"]["plant_life"])
         # WOMBAT expects 8760 hours to simulate one year of operation.
-        sim.run(delete_logs=True, save_metrics_inputs=False, until=8760)
-
-        scaling_factor = self.config.cluster_rating_MW  # The baseline electrolyzer in WOMBAT is 1MW
+        sim.run(delete_logs=True, save_metrics_inputs=False, until=8760 * project_length)
 
         # TODO: handle cases where the project is longer than one year.
         # Do the project and divide by the project lifetime using sim.env.simulation_years
@@ -102,7 +101,9 @@ class WOMBATElectrolyzerModel(ECOElectrolyzerPerformanceModel):
         original_hydrogen_out = outputs["hydrogen_out"].copy()
 
         # Adjust hydrogen_out by availability
-        hydrogen_out_with_availability = outputs["hydrogen_out"] * availability
+        hydrogen_out_with_availability = (
+            outputs["hydrogen_out"] * availability[: len(outputs["hydrogen_out"])]
+        )
 
         # Update outputs["hydrogen_out"] with the available hydrogen
         outputs["hydrogen_out"] = hydrogen_out_with_availability
@@ -110,9 +111,10 @@ class WOMBATElectrolyzerModel(ECOElectrolyzerPerformanceModel):
         # Compute total hydrogen produced (sum over the year)
         outputs["total_hydrogen_produced"] = np.sum(hydrogen_out_with_availability)
 
-        # Compute percent hydrogen lost due to O&M maintenance
-        percent_hydrogen_lost = 100 * (
-            1 - outputs["total_hydrogen_produced"] / np.sum(original_hydrogen_out)
+        percent_hydrogen_lost = (
+            (np.sum(original_hydrogen_out) - outputs["total_hydrogen_produced"])
+            / np.sum(original_hydrogen_out)
+            * 100.0
         )
 
         outputs["percent_hydrogen_lost"] = percent_hydrogen_lost
@@ -121,19 +123,21 @@ class WOMBATElectrolyzerModel(ECOElectrolyzerPerformanceModel):
         # that's fine. In the future we may need to adjust this to handle multiple years and
         # output OpEx as an array.
         outputs["CapEx"] = self.config.electrolyzer_capex * self.config.cluster_rating_MW * 1e3
-        outputs["OpEx"] = sim.metrics.opex("annual").squeeze() * scaling_factor
+        outputs["OpEx"] = sim.metrics.opex("project").squeeze() / project_length
         outputs["electrolyzer_availability"] = sim.metrics.time_based_availability(
-            "annual", "electrolyzer"
+            "project", "electrolyzer"
         ).squeeze()
 
-        sim.metrics.potential[sim.metrics.electrolyzer_id] = np.atleast_2d(original_hydrogen_out).T
-        sim.metrics.production[sim.metrics.electrolyzer_id] = np.atleast_2d(
-            hydrogen_out_with_availability
-        ).T
+        # sim.metrics.potential[sim.metrics.electrolyzer_id] = np.atleast_2d(
+        #     original_hydrogen_out
+        # ).T
+        # sim.metrics.production[sim.metrics.electrolyzer_id] = np.atleast_2d(
+        #     hydrogen_out_with_availability
+        # ).T
 
-        # CF calculation goes here
-        outputs["capacity_factor"] = sim.metrics.capacity_factor(
-            which="net", frequency="project", by="electrolyzer"
-        ).squeeze()
+        # # CF calculation goes here
+        # outputs["capacity_factor"] = sim.metrics.capacity_factor(
+        #     which="net", frequency="project", by="electrolyzer"
+        # ).squeeze()
 
         discrete_outputs["cost_year"] = self.config.cost_year

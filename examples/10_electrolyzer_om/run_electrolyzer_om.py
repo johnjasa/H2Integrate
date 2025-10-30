@@ -9,7 +9,7 @@ from h2integrate.core.h2integrate_model import H2IntegrateModel
 
 
 # Boolean to control whether to run simulations or just load saved data
-RUN_SIMULATIONS = False  # Set to False to just plot using saved data
+RUN_SIMULATIONS = True  # Set to False to just plot using saved data
 
 # Mapping from file names to nice display names (in desired order)
 CASE_MAPPING = {
@@ -141,22 +141,6 @@ if RUN_SIMULATIONS:
             print(f"  Capacity Factor: {results['capacity_factor'][-1]:.2%}")
             print(f"  Availability: {results['electrolyzer_availability'][-1]:.2%}")
             print(f"  H2 Lost: {results['percent_hydrogen_lost'][-1]:.2f}%")
-
-        except (ValueError, KeyError, RuntimeError) as e:
-            print(f"ERROR running {config_file}: {e}")
-            # Append NaN values for failed runs
-            results["config_name"].append(config_file.replace(".yaml", ""))
-            results["display_name"].append(CASE_MAPPING[config_file])
-            for key in results:
-                if key not in ["config_name", "display_name"]:
-                    if "timeseries" in key or key in [
-                        "wind_electricity_out",
-                        "electrolyzer_hydrogen_out",
-                        "LCOH_breakdown",
-                    ]:
-                        results[key].append(None)
-                    else:
-                        results[key].append(np.nan)
 
         finally:
             # Clean up temp files
