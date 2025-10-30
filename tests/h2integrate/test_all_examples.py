@@ -894,8 +894,18 @@ def test_simple_dispatch_example(subtests):
 
     # Subtest for LCOE
     with subtests.test("Check LCOE value"):
-        lcoe = model.prob.get_val("finance_subgroup_electricity.LCOE")[0]
+        lcoe = model.prob.get_val("finance_subgroup_electricity.LCOE_profast")[0]
         assert pytest.approx(lcoe, rel=1e-6) == 0.07801723344476236
+
+    # Subtest for NPV
+    with subtests.test("Check NPV value"):
+        npv = model.prob.get_val("finance_subgroup_electricity.NPV_electricity_npv")[0]
+        assert pytest.approx(npv, rel=1e-6) == 3791194.71
+
+    # Subtest for ProFAST NPV
+    with subtests.test("Check NPV value"):
+        npv = model.prob.get_val("finance_subgroup_electricity.NPV_electricity_profast_npv")[0]
+        assert pytest.approx(npv, rel=1e-6) == 7518969.18
 
     # Subtest for total electricity produced
     with subtests.test("Check total electricity produced"):
@@ -947,7 +957,9 @@ def test_simple_dispatch_example(subtests):
 
     wind_lcoe = model.prob.get_val("finance_subgroup_wind.LCOE", units="USD/MW/h")[0]
     battery_lcoe = model.prob.get_val("finance_subgroup_battery.LCOE", units="USD/MW/h")[0]
-    electricity_lcoe = model.prob.get_val("finance_subgroup_electricity.LCOE", units="USD/MW/h")[0]
+    electricity_lcoe = model.prob.get_val(
+        "finance_subgroup_electricity.LCOE_profast", units="USD/MW/h"
+    )[0]
 
     with subtests.test("Check electricity LCOE is greater than wind LCOE"):
         assert electricity_lcoe > wind_lcoe
