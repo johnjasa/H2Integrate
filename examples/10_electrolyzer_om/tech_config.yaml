@@ -9,11 +9,11 @@ technologies:
       model: "wind_plant_cost"
     model_inputs:
       shared_parameters:
-        num_turbines: 2
-        turbine_rating_kw: 8300
+        num_turbines: 1
+        turbine_rating_kw: 1500.0
       performance_parameters:
-        rotor_diameter: 196.
-        hub_height: 130.
+        rotor_diameter: 77.
+        hub_height: 80.
         layout_mode: "basicgrid"
         model_name: "pysam"
         model_input_file: null
@@ -26,7 +26,7 @@ technologies:
         timestep: [1, 60]
         fin_model: "default"
         name: "UtilityScaleWindPlant"
-        turbine_name: "2023NREL_Bespoke_8.3MW_196" #turbine model to use
+        turbine_name: "DOE_GE_1.5MW_77" #turbine model to use
         turbine_group: "onshore"
         override_wind_resource_height: False
         adjust_air_density_for_elevation: True
@@ -44,8 +44,8 @@ technologies:
       shared_parameters:
         commodity_name: "electricity"
         commodity_units: "kW"
-        max_charge_rate: 8000.0  # kW (roughly half of wind capacity)
-        max_capacity: 32000.0  # kWh (4 hours of storage at max charge rate)
+        max_charge_rate: 500.0  # kW (roughly half of wind capacity)
+        max_capacity: 4000.0  # kWh (4 hours of storage at max charge rate)
       control_parameters:
         max_charge_percent: 1.0  # percent as decimal
         min_charge_percent: 0.1  # percent as decimal
@@ -53,7 +53,7 @@ technologies:
         max_discharge_rate: 8000.0  # kW
         charge_efficiency: 0.95 # percent as decimal
         discharge_efficiency: 0.95 # percent as decimal
-        demand_profile: 10000 # kW (electrolyzer capacity)
+        demand_profile: 1000. # kW (electrolyzer capacity)
       cost_parameters:
         cost_year: 2022
         energy_capex: 250 # $/kWh
@@ -73,7 +73,7 @@ technologies:
           size_for: 'BOL' #'BOL' (generous) or 'EOL' (conservative)
           hydrogen_dmd:
         n_clusters: 1
-        cluster_rating_MW: 10
+        cluster_rating_MW: 1
         pem_control_type: 'basic'
         eol_eff_percent_loss: 13 #eol defined as x% change in efficiency from bol
         uptime_hours_until_eol: 80000. #number of 'on' hours until electrolyzer reaches eol
