@@ -82,11 +82,13 @@ class WOMBATElectrolyzerModel(ECOElectrolyzerPerformanceModel):
         sim = Simulation(
             library_path=library_path,
             config=wombat_config,
-            random_seed=123,
+            random_seed=314,
         )
 
         # WOMBAT expects 8760 hours to simulate one year of operation.
         sim.run(delete_logs=True, save_metrics_inputs=False, until=8760)
+
+        scaling_factor = self.config.cluster_rating_MW  # The baseline electrolyzer in WOMBAT is 1MW
 
         # TODO: handle cases where the project is longer than one year.
         # Do the project and divide by the project lifetime using sim.env.simulation_years
@@ -119,7 +121,7 @@ class WOMBATElectrolyzerModel(ECOElectrolyzerPerformanceModel):
         # that's fine. In the future we may need to adjust this to handle multiple years and
         # output OpEx as an array.
         outputs["CapEx"] = self.config.electrolyzer_capex * self.config.cluster_rating_MW * 1e3
-        outputs["OpEx"] = sim.metrics.opex("project").squeeze()
+        outputs["OpEx"] = sim.metrics.opex("annual").squeeze() * scaling_factor
         outputs["electrolyzer_availability"] = sim.metrics.time_based_availability(
             "annual", "electrolyzer"
         ).squeeze()
