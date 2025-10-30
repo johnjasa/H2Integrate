@@ -31,8 +31,34 @@ technologies:
         override_wind_resource_height: False
         adjust_air_density_for_elevation: True
       cost_parameters:
-        cost_per_kw: 1500.0
+        cost_per_kw: 1100.0
         cost_year: 2019
+  battery:
+    performance_model:
+      model: "simple_generic_storage"
+    cost_model:
+      model: "atb_battery_cost"
+    control_strategy:
+      model: "demand_open_loop_controller"
+    model_inputs:
+      shared_parameters:
+        commodity_name: "electricity"
+        commodity_units: "kW"
+        max_charge_rate: 8000.0  # kW (roughly half of wind capacity)
+        max_capacity: 32000.0  # kWh (4 hours of storage at max charge rate)
+      control_parameters:
+        max_charge_percent: 1.0  # percent as decimal
+        min_charge_percent: 0.1  # percent as decimal
+        init_charge_percent: 0.25  # percent as decimal
+        max_discharge_rate: 8000.0  # kW
+        charge_efficiency: 0.95 # percent as decimal
+        discharge_efficiency: 0.95 # percent as decimal
+        demand_profile: 10000 # kW (electrolyzer capacity)
+      cost_parameters:
+        cost_year: 2022
+        energy_capex: 250 # $/kWh
+        power_capex: 40 # $/kW
+        opex_fraction: 0.02 # percent of capex
   electrolyzer:
     performance_model:
       model: "wombat"
@@ -41,13 +67,13 @@ technologies:
     model_inputs:
       shared_parameters:
         location: "onshore"
-        electrolyzer_capex: 1295 # $/kW overnight installed capital costs for a 1 MW system in 2022
+        electrolyzer_capex: 1000  # $/kW
         sizing:
           resize_for_enduse: False
           size_for: 'BOL' #'BOL' (generous) or 'EOL' (conservative)
           hydrogen_dmd:
         n_clusters: 1
-        cluster_rating_MW: 40
+        cluster_rating_MW: 10
         pem_control_type: 'basic'
         eol_eff_percent_loss: 13 #eol defined as x% change in efficiency from bol
         uptime_hours_until_eol: 80000. #number of 'on' hours until electrolyzer reaches eol

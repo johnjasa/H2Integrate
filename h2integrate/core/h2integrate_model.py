@@ -5,7 +5,6 @@ import yaml
 import numpy as np
 import openmdao.api as om
 
-from h2integrate.core.utilities import create_xdsm_from_config
 from h2integrate.finances.finances import AdjustedCapexOpexComp
 from h2integrate.core.resource_summer import ElectricitySumComp
 from h2integrate.core.supported_models import supported_models, electricity_producing_techs
@@ -999,11 +998,11 @@ class H2IntegrateModel:
                     f"{dispatching_tech_name}.dispatch_block_rule_function_{tech_name}",
                 )
 
-        if (pyxdsm is not None) and (len(technology_interconnections) > 0):
-            try:
-                create_xdsm_from_config(self.plant_config)
-            except FileNotFoundError as e:
-                print(f"Unable to create system XDSM diagram. Error: {e}")
+        # if (pyxdsm is not None) and (len(technology_interconnections) > 0):
+        #     try:
+        #         create_xdsm_from_config(self.plant_config)
+        #     except FileNotFoundError as e:
+        #         print(f"Unable to create system XDSM diagram. Error: {e}")
 
     def create_driver_model(self):
         """
