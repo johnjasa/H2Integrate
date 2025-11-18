@@ -16,28 +16,42 @@ site:
       y: [2000.0, 2000.0, 2500.0],
     }
   ]
+
   resources:
     wind_resource:
       resource_model: "wind_toolkit_v2_api"
       resource_parameters:
-        resource_year: 2012
+        latitude: 35.2018863
+        longitude: -101.945027
+        resource_year: 2013
+    solar_resource:
+      resource_model: "goes_aggregated_solar_v4_api"
+      resource_parameters:
+        resource_year: 2013
 
-plant:
-  plant_life: 30
 # array of arrays containing left-to-right technology
 # interconnections; can support bidirectional connections
 # with the reverse definition.
 # this will naturally grow as we mature the interconnected tech
 technology_interconnections: [
-  ["wind", "battery", "electricity", "cable"],
+  # ["hopp", "electrolyzer", "electricity", "cable"],
+  ["wind", "combiner", "electricity", "cable"], #source_tech, dest_tech, transport_item, transport_type = connection
+  ["solar", "combiner", "electricity", "cable"],
+  ["combiner", "battery", "electricity", "cable"],
   ["battery", "electrolyzer", "electricity", "cable"],
-  # etc
 ]
 
 resource_to_tech_connections: [
   # connect the wind resource to the wind technology
   ['wind_resource', 'wind', 'wind_resource_data'],
+  ['solar_resource', 'solar', 'solar_resource_data'],
 ]
+
+plant:
+  plant_life: 30
+  simulation:
+    n_timesteps: 8760
+    dt: 3600
 
 finance_parameters:
   finance_groups:
@@ -92,8 +106,8 @@ finance_parameters:
     electricity:
       commodity: "electricity"
       finance_groups: ["lcoe_financials"]
-      technologies: ["wind", "battery"]
+      technologies: ["wind", "solar", "battery"]
     hydrogen:
       commodity: "hydrogen"
       finance_groups: ["lcoe_financials", "lcoh_financials"]
-      technologies: ["wind", "battery", "electrolyzer"]
+      technologies: ["wind", "solar", "battery", "electrolyzer"]

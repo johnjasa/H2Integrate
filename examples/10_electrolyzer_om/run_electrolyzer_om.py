@@ -450,113 +450,6 @@ if len(di_indices) >= 2:
 else:
     print("DI water failure scenarios not found in results or insufficient cases to plot.")
 
-
-# # ============================================================================
-# # Timeseries Comparison Function and Plot
-# # ============================================================================
-# def plot_timeseries_comparison(
-#     results, case_names_to_plot, save_filename="timeseries_comparison.png"
-# ):
-#     """
-#     Plot timeseries comparison for specified cases showing a representative week in May.
-
-#     Parameters:
-#     -----------
-#     results : dict
-#         Dictionary containing all results including timeseries data
-#     case_names_to_plot : list
-#         List of display names to plot (e.g., ['Baseline Case', 'All of the above'])
-#     save_filename : str
-#         Filename to save the plot
-#     """
-#     print(f"\nCreating timeseries comparison plot for: {case_names_to_plot}")
-
-#     # Find indices of cases to plot
-#     case_indices = []
-#     for name in case_names_to_plot:
-#         try:
-#             idx = results["display_name"].index(name)
-#             case_indices.append(idx)
-#         except ValueError:
-#             print(f"Warning: Case '{name}' not found in results")
-
-#     if not case_indices:
-#         print("No valid cases found to plot")
-#         return
-
-#     # Create figure with 2 subplots
-#     fig, axes = plt.subplots(2, 1, figsize=(14, 10))
-
-#     # Define a week in December (middle of December)
-#     # December starts around hour 7920 (31+28+31+30+31+30+31+31+30+31+30 = 334 days * 24 hours)
-#     # Show mid-December: day 345-352 of year
-#     start_hour = 345 * 24  # Day 345
-#     end_hour = 352 * 24  # Day 352 (one week)
-#     hours_in_week = np.arange(start_hour, end_hour)
-#     days_in_week = (hours_in_week - start_hour) / 24  # 0-7 days
-
-#     colors = plt.cm.tab10(np.linspace(0, 1, len(case_indices)))
-
-#     for idx, case_idx in enumerate(case_indices):
-#         case_name = results["display_name"][case_idx]
-#         color = colors[idx]
-
-#         # Plot 1: Wind Electricity Production
-#         wind_elec = results["wind_electricity_out"][case_idx]
-#         if wind_elec is not None and len(wind_elec) > 0:
-#             wind_week = wind_elec[start_hour:end_hour]
-#             axes[0].plot(
-#                 days_in_week,
-#                 wind_week / 1000,
-#                 label=case_name,
-#                 color=color,
-#                 alpha=0.7,
-#                 linewidth=1.5,
-#             )
-
-#         # Plot 2: Hydrogen Production
-#         h2_prod = results["electrolyzer_hydrogen_out"][case_idx]
-#         if h2_prod is not None and len(h2_prod) > 0:
-#             h2_week = h2_prod[start_hour:end_hour]
-#             axes[1].plot(
-#                 days_in_week, h2_week, label=case_name, color=color, alpha=0.7, linewidth=1.5
-#             )
-
-#     # Configure subplot 1: Wind Electricity
-#     axes[0].set_ylabel("Wind Power (MW)", fontsize=12)
-#     axes[0].set_title("Wind Electricity Production", fontsize=13)
-#     axes[0].legend(loc="best", fontsize=10)
-#     axes[0].set_xlim(0, 7)
-#     axes[0].set_xticks(range(8))
-#     axes[0].set_xticklabels(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Mon"])
-#     axes[0].grid(True, alpha=0.3, linestyle="--")
-
-#     # Configure subplot 2: Hydrogen Production
-#     axes[1].set_ylabel("H₂ Production (kg/h)", fontsize=12)
-#     axes[1].set_xlabel("Day of Week", fontsize=12)
-#     axes[1].set_title("Hydrogen Production Rate", fontsize=13)
-#     axes[1].legend(loc="best", fontsize=10)
-#     axes[1].set_xlim(0, 7)
-#     axes[1].set_xticks(range(8))
-#     axes[1].set_xticklabels(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Mon"])
-#     axes[1].grid(True, alpha=0.3, linestyle="--")
-
-#     plt.tight_layout()
-#     plt.savefig(save_filename, dpi=400, bbox_inches="tight")
-#     print(f"Timeseries plot saved as '{save_filename}'")
-
-#     return fig
-
-
-# # Create timeseries plot for Baseline and "All of the above" cases
-# if "wind_electricity_out" in results and results["wind_electricity_out"][0] is not None:
-#     plot_timeseries_comparison(results, ["Baseline Case", "All of the above"])
-# else:
-#     print(
-#         "\nNote: Timeseries data not available. "
-#         "Set RUN_SIMULATIONS=True to generate timeseries data."
-#     )
-
 # ============================================================================
 # LCOH Breakdown Stacked Bar Chart
 # ============================================================================
@@ -569,7 +462,7 @@ if "LCOH_breakdown" in results and results["LCOH_breakdown"][0] is not None:
     x_positions = np.arange(len(display_names))
     separator_positions = [0.5, 3.5, 6.5, 7.5]
 
-    fig_breakdown, ax_breakdown = plt.subplots(figsize=(16, 10))
+    fig_breakdown, ax_breakdown = plt.subplots(figsize=(18, 10))
 
     # Function to clean up component names
     def clean_component_name(name):
@@ -585,8 +478,10 @@ if "LCOH_breakdown" in results and results["LCOH_breakdown"][0] is not None:
             "electrolyzer OpEx": "H2 OpEx",
             "battery CapEx": "Batt. CapEx",
             "battery OpEx": "Batt. OpEx",
-            "Taxes": "Taxes",
-            "Finances": "Finances",
+            "solar CapEx": "Solar CapEx",
+            "solar OpEx": "Solar OpEx",
+            "Taxes": "Taxes & Finances",
+            "Finances": "Taxes & Finances",
         }
 
         return name_mapping.get(clean, clean)
@@ -604,8 +499,23 @@ if "LCOH_breakdown" in results and results["LCOH_breakdown"][0] is not None:
             else:
                 total_values.append(sum(breakdown.values()))
 
-            # Add all components except Total
-            components = {k: v for k, v in breakdown.items() if "total" not in k.lower()}
+            # Add all components except Total, and combine Taxes and Finances
+            components = {}
+            taxes_finances_sum = 0.0
+            for k, v in breakdown.items():
+                if "total" not in k.lower():
+                    clean_k = k.replace("LCOH: ", "").replace(" ($/kg)", "")
+                    if clean_k in ["Taxes", "Finances"]:
+                        taxes_finances_sum += v
+                    else:
+                        components[k] = v
+
+            # Add combined Taxes & Finances if non-zero
+            if taxes_finances_sum > 0:
+                components["LCOH: Taxes ($/kg)"] = (
+                    taxes_finances_sum  # Use one key as representative
+                )
+
             all_components.update(components.keys())
         else:
             total_values.append(0.0)
@@ -617,8 +527,21 @@ if "LCOH_breakdown" in results and results["LCOH_breakdown"][0] is not None:
     cost_matrix = []
     for breakdown in results["LCOH_breakdown"]:
         if breakdown is not None:
-            # Filter out Total entry
-            components = {k: v for k, v in breakdown.items() if "total" not in k.lower()}
+            # Filter out Total entry and combine Taxes and Finances
+            components = {}
+            taxes_finances_sum = 0.0
+            for k, v in breakdown.items():
+                if "total" not in k.lower():
+                    clean_k = k.replace("LCOH: ", "").replace(" ($/kg)", "")
+                    if clean_k in ["Taxes", "Finances"]:
+                        taxes_finances_sum += v
+                    else:
+                        components[k] = v
+
+            # Add combined Taxes & Finances if non-zero
+            if taxes_finances_sum > 0:
+                components["LCOH: Taxes ($/kg)"] = taxes_finances_sum
+
             row = [components.get(comp, 0.0) for comp in component_list]
         else:
             row = [0.0] * len(component_list)
@@ -626,8 +549,27 @@ if "LCOH_breakdown" in results and results["LCOH_breakdown"][0] is not None:
 
     cost_matrix = np.array(cost_matrix).T  # Transpose for stacking
 
-    # Create stacked bar chart
-    colors = plt.cm.tab20(np.linspace(0, 1, len(component_list)))
+    # Define color mapping by technology (using color families)
+    def get_component_color(component_name):
+        """Assign colors based on technology with CapEx/OpEx hue variations"""
+        clean = component_name.replace("LCOH: ", "").replace(" ($/kg)", "")
+
+        # Color families: darker for CapEx, lighter for OpEx
+        if "wind" in clean.lower():
+            return "#2d7a2d" if "CapEx" in clean else "#66b366"  # Dark green / Light green
+        elif "electrolyzer" in clean.lower() or "h2" in clean.lower():
+            return "#1f5fa8" if "CapEx" in clean else "#6ba3d4"  # Dark blue / Light blue
+        elif "battery" in clean.lower():
+            return "#b8860b" if "CapEx" in clean else "#daa520"  # Dark goldenrod / Goldenrod
+        elif "solar" in clean.lower():
+            return "#d97700" if "CapEx" in clean else "#ff9933"  # Dark orange / Light orange
+        elif "taxes" in clean.lower() or "finances" in clean.lower():
+            return "#8b4789"  # Purple for combined Taxes & Finances
+        else:
+            return "#808080"  # Gray for unknown
+
+    # Create color list for each component
+    colors = [get_component_color(comp) for comp in component_list]
     bottom = np.zeros(len(display_names))
 
     # Store small components for rightmost bar labeling
@@ -636,17 +578,24 @@ if "LCOH_breakdown" in results and results["LCOH_breakdown"][0] is not None:
     for idx, (component, color) in enumerate(zip(component_list, colors)):
         values = cost_matrix[idx]
         bars = ax_breakdown.bar(
-            x_positions, values, bottom=bottom, color=color, alpha=0.8, width=0.8
+            x_positions,
+            values,
+            bottom=bottom,
+            color=color,
+            alpha=0.8,
+            width=0.8,
+            label=clean_component_name(component),
         )
 
         # Get clean component name
         clean_name = clean_component_name(component)
 
-        # Add text labels for each component segment (only if value is significant)
+        # Add text labels for each component segment based on value thresholds
         for i, (x, val) in enumerate(zip(x_positions, values)):
-            if val > 0.5:  # Only label if contribution is > $0.50/kg
-                y_pos = bottom[i] + val / 2
-                # Two lines: component name on top, dollar amount below
+            y_pos = bottom[i] + val / 2
+
+            if val >= 0.25:
+                # Value >= 0.25: show component name and dollar value
                 label_text = f"{clean_name}\n${val:.2f}"
                 ax_breakdown.text(
                     x,
@@ -658,13 +607,20 @@ if "LCOH_breakdown" in results and results["LCOH_breakdown"][0] is not None:
                     fontweight="normal",
                     color="black",
                 )
-            elif (
-                i == len(x_positions) - 1 and val > 0.01
-            ):  # For rightmost bar, collect small components
-                y_pos = bottom[i] + val / 2
-                small_components_rightmost.append(
-                    {"name": clean_name, "value": val, "y_pos": y_pos, "color": color}
+            elif val >= 0.05:
+                # 0.05 <= value < 0.25: show only dollar value
+                label_text = f"${val:.2f}"
+                ax_breakdown.text(
+                    x,
+                    y_pos,
+                    label_text,
+                    ha="center",
+                    va="center",
+                    fontsize=10,
+                    fontweight="normal",
+                    color="black",
                 )
+            # else: value < 0.05, no label
 
         bottom += values
 
@@ -682,6 +638,18 @@ if "LCOH_breakdown" in results and results["LCOH_breakdown"][0] is not None:
     ax_breakdown.set_xticklabels(display_names, rotation=45, ha="right", fontsize=11)
     ax_breakdown.tick_params(axis="both", labelsize=12)
     ax_breakdown.set_ylim(top=max(total_values) * 1.12)  # Add space for total labels
+
+    # Add legend to the right side of the plot (reversed order)
+    handles, labels = ax_breakdown.get_legend_handles_labels()
+    ax_breakdown.legend(
+        handles[::-1],
+        labels[::-1],  # Reverse the order
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+        fontsize=11,
+        frameon=True,
+        framealpha=0.9,
+    )
 
     plt.tight_layout()
     plt.savefig("lcoh_breakdown_stacked.png", dpi=400, bbox_inches="tight")
