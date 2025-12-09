@@ -233,20 +233,21 @@ def tornado_subplot(
 
     y_pos = np.arange(len(labels))
 
-    # Single muted blue color for both directions
-    bar_color = "#5b7aa3"  # muted desaturated blue
+    # Different colors for increase vs decrease
+    increase_color = "#d97777"  # Muted red for increases (right side)
+    decrease_color = "#77b3d9"  # Muted blue for decreases (left side)
 
     # For tornado: draw bars extending from baseline to scenario value
     # Increase (right): start at baseline, width = inc - baseline
     for y, inc in zip(y_pos, inc_vals):
         if inc is not None and inc != baseline_value:
             width = inc - baseline_value
-            ax.barh(y, width, left=baseline_value, color=bar_color, alpha=0.85)
+            ax.barh(y, width, left=baseline_value, color=increase_color, alpha=0.85)
     # Decrease (left): start at dec value, width = baseline - dec
     for y, dec in zip(y_pos, dec_vals):
         if dec is not None and dec != baseline_value:
             width = baseline_value - dec
-            ax.barh(y, width, left=dec, color=bar_color, alpha=0.85)
+            ax.barh(y, width, left=dec, color=decrease_color, alpha=0.85)
 
     # Baseline line (gray color)
     ax.axvline(baseline_value, color="gray", linewidth=1.0)
