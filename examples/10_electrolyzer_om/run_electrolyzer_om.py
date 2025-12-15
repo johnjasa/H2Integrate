@@ -9,7 +9,7 @@ from h2integrate.core.h2integrate_model import H2IntegrateModel
 
 
 # Boolean to control whether to run simulations or just load saved data
-RUN_SIMULATIONS = False  # Set to False to just plot using saved data
+RUN_SIMULATIONS = True  # Set to False to just plot using saved data
 
 # Mapping from file names to nice display names (in desired order)
 CASE_MAPPING = {

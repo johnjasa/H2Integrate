@@ -48,7 +48,7 @@ resource_to_tech_connections: [
 ]
 
 plant:
-  plant_life: 30
+  plant_life: 20
   simulation:
     n_timesteps: 8760
     dt: 3600
