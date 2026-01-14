@@ -27,6 +27,53 @@ except ImportError:
 
 
 class H2IntegrateModel:
+    """Main model class for H2Integrate system simulations.
+
+    This class orchestrates the creation and configuration of a complete H2Integrate model,
+    including site resources, plant configuration, technology models, finance models, and
+    optimization drivers. It builds an OpenMDAO problem structure that represents the entire
+    hybrid energy system.
+
+    The model is constructed from configuration files that define:
+        - Driver settings (optimization or analysis parameters)
+        - Technology specifications (performance, cost, and finance models)
+        - Plant configuration (site location, interconnections, finance parameters)
+
+    Attributes:
+        name (str): Name of the system from main config.
+        system_summary (str): Summary description from main config.
+        driver_config (dict): Validated driver configuration.
+        technology_config (dict): Validated technology configuration.
+        plant_config (dict): Validated plant configuration.
+        driver_config_path (Path | None): Path to driver config file.
+        tech_config_path (Path | None): Path to technology config file.
+        plant_config_path (Path | None): Path to plant config file.
+        tech_parent_path (Path | None): Parent directory of technology config.
+        plant_parent_path (Path | None): Parent directory of plant config.
+        supported_models (dict): Dictionary of available model classes.
+        prob (om.Problem): OpenMDAO problem instance.
+        model (om.Group): OpenMDAO model group.
+        setup_has_been_called (bool): Flag tracking if setup() has been called.
+        recorder_path (Path | None): Path to recorder file if configured.
+        tech_names (list[str]): List of technology names in the model.
+        performance_models (list): List of performance model instances.
+        control_strategies (list): List of control strategy instances.
+        dispatch_rule_sets (list): List of dispatch rule set instances.
+        cost_models (list): List of cost model instances.
+        finance_models (list): List of finance model instances.
+        finance_subgroups (dict): Dictionary of finance subgroup configurations.
+
+    Args:
+        config_input (dict | str | Path): Main configuration containing references to
+            driver, technology, and plant configurations. Can be a dictionary or path
+            to a YAML file.
+
+    Example:
+        >>> model = H2IntegrateModel("config.yaml")
+        >>> model.run()
+        >>> model.post_process()
+    """
+
     def __init__(self, config_input):
         # read in config file; it's a yaml dict that looks like this:
         self.load_config(config_input)
@@ -191,19 +238,39 @@ class H2IntegrateModel:
         )
 
     def create_custom_models(self, model_config, config_parent_path, model_types, prefix=""):
-        """This method loads custom models from the specified directory and adds them to the
-        supported models dictionary.
+        """Load custom models from configuration and add them to supported models.
+
+        This method dynamically imports custom model classes from Python files specified in
+        the configuration and registers them in the supported_models dictionary. It handles
+        both technology-specific models and general finance models.
+
+        The method validates that:
+            - Custom models use unique names (not conflicting with built-in models)
+            - All instances of the same custom model use the same class definition
+            - Required fields (model_class_name, model_location) are provided
 
         Args:
-            model_config (dict): dictionary containing models, such as
-                `technology_config["technologies"]`
-            config_parent_path (Path): parent path of the input file that `model_config` comes from.
-                Should either be `plant_config_path.parent` or `tech_config_path.parent`
-            model_types (list[str]): list of keynames to search for in `model_config.values()`.
-                Should be ["performance_model", "cost_model", "financial_model"] if `model_config`
-                is technology_config["technologies"].
-            prefix (str, optional): Prefix of "model_class_name", "model_location" and "model".
-                Defaults to "". Should be "finance_" if looking for custom general finance models.
+            model_config (dict): Dictionary containing models, such as
+                `technology_config["technologies"]`.
+            config_parent_path (Path | None): Parent path of the input file that `model_config`
+                comes from. Should be either `plant_config_path.parent` or
+                `tech_config_path.parent`. If None, uses current working directory.
+            model_types (list[str]): List of keynames to search for in `model_config.values()`.
+                Should be ["performance_model", "cost_model", "financial_model"] if
+                `model_config` is technology_config["technologies"].
+            prefix (str, optional): Prefix for "model_class_name", "model_location" and
+                "model" keys. Defaults to "". Should be "finance_" if looking for custom
+                general finance models.
+
+        Raises:
+            ValueError: If two custom models use the same name but different class definitions.
+            ValueError: If custom model name conflicts with built-in model name.
+            ValueError: If required fields (model_class_name, model_location) are missing.
+            FileNotFoundError: If custom model file location does not exist.
+
+        Side Effects:
+            - Updates self.supported_models with custom model classes
+            - Dynamically imports modules from custom model locations
         """
 
         included_custom_models = {}
@@ -285,8 +352,23 @@ class H2IntegrateModel:
                             raise ValueError(msg)
 
     def collect_custom_models(self):
-        """Collect custom models from the technology configuration and
-        general finance models found in the plant configuration.
+        """Collect custom models from the technology and plant configurations.
+
+        This method identifies and loads custom models specified in both the technology
+        configuration and the plant configuration's finance parameters. Custom models are
+        dynamically imported and added to the supported_models dictionary.
+
+        The method searches for:
+            - Custom technology models (performance, cost, and finance models)
+            - Custom general finance models from plant configuration
+
+        Side Effects:
+            - Updates self.supported_models with custom model classes
+            - Imports custom model modules dynamically
+
+        Raises:
+            ValueError: If custom model has same name as built-in model.
+            FileNotFoundError: If custom model file location does not exist.
         """
         # check for custom technology models
         self.create_custom_models(
@@ -320,6 +402,21 @@ class H2IntegrateModel:
                 )
 
     def create_site_model(self):
+        """Create the site-level model including location and resource components.
+
+        This method constructs an OpenMDAO group containing site-specific information such as
+        location (latitude, longitude, elevation), boundaries, and resource models (e.g., wind,
+        solar). The site model is added as a subsystem to the main model.
+
+        The site model includes:
+            - Site location parameters (latitude, longitude, elevation)
+            - Site boundaries if specified
+            - Resource components for each resource defined in the plant config
+
+        Side Effects:
+            - Creates and adds a "site" subsystem to self.model
+            - Instantiates resource components based on plant_config["site"]["resources"]
+        """
         site_group = om.Group()
 
         # Create a site-level component
@@ -357,15 +454,21 @@ class H2IntegrateModel:
         self.model.add_subsystem("site", site_group)
 
     def create_plant_model(self):
-        """
-        Create the plant-level model.
+        """Create the plant-level model group.
 
-        This method creates an OpenMDAO group that contains all the technologies.
-        It uses the plant configuration but not the driver or technology configuration.
+        This method creates an OpenMDAO group that serves as a container for all technologies
+        and plant-level components. The plant model organizes system-wide information that is
+        shared across technologies, including site information, project parameters, control
+        strategies, and finance parameters.
 
-        Information at this level might be used by any technology and info stored here is
-        the same for each technology. This includes site information, project parameters,
-        control strategy, and finance parameters.
+        The plant model uses the plant configuration but not the driver or technology
+        configuration directly. It provides a hierarchical structure where all technology
+        subsystems will be added.
+
+        Side Effects:
+            - Creates a plant group and adds it to self.model as "plant" subsystem
+            - Stores reference to plant subsystem in self.plant
+            - Promotes all plant variables to model level
         """
         plant_group = om.Group()
 
@@ -373,6 +476,28 @@ class H2IntegrateModel:
         self.plant = self.model.add_subsystem("plant", plant_group, promotes=["*"])
 
     def create_technology_models(self):
+        """Create and configure technology models for each technology in the system.
+
+        This method loops through all technologies defined in the technology configuration and
+        instantiates the corresponding OpenMDAO components for performance, cost, control, and
+        finance models. Each technology is added as a subsystem to the plant model.
+
+        The method handles:
+            - Standard technologies with separate performance and cost models
+            - Combined performance/cost models (e.g., HOPP, WOMBAT, iron models)
+            - Control strategies and dispatch rule sets
+            - Technology-specific finance models
+            - Feedstock source and cost models
+
+        Side Effects:
+            - Populates self.tech_names, self.performance_models, self.control_strategies,
+              self.dispatch_rule_sets, self.cost_models, and self.finance_models
+            - Adds technology subsystems to self.plant
+
+        Raises:
+            NameError: If a technology is named "site" (reserved name).
+            ValueError: If tech_name in control_parameters doesn't match technology name.
+        """
         # Loop through each technology and instantiate an OpenMDAO object (assume it exists)
         # for each technology
 
@@ -505,6 +630,21 @@ class H2IntegrateModel:
                 self.plant.add_subsystem(tech_name, comp)
 
     def _process_model(self, model_type, individual_tech_config, tech_group):
+        """Process and instantiate a model for a technology.
+
+        This is a helper method that creates an OpenMDAO component for a specific model type
+        (e.g., performance_model, cost_model, control_strategy) and adds it to the technology
+        group.
+
+        Args:
+            model_type (str): Type of model to process (e.g., "performance_model",
+                "cost_model", "control_strategy", "dispatch_rule_set").
+            individual_tech_config (dict): Configuration dictionary for the specific technology.
+            tech_group (om.Group): OpenMDAO group representing the technology.
+
+        Returns:
+            om.Component: The instantiated OpenMDAO model component.
+        """
         # Generalized function to process model definitions
         model_name = individual_tech_config[model_type]["model"]
         model_object = self.supported_models[model_name]
@@ -848,6 +988,34 @@ class H2IntegrateModel:
         self.finance_subgroups = finance_subgroups
 
     def connect_technologies(self):
+        """Connect technologies, resources, and dispatch rules in the OpenMDAO model.
+
+        This method establishes connections between different components of the system:
+            - Technology interconnections (e.g., hydrogen flow from electrolyzer to storage)
+            - Resource to technology connections (e.g., wind resource to wind turbine)
+            - Technology to dispatch connections (e.g., dispatch rules to controlled systems)
+            - Finance model connections (costs, production, and revenue streams)
+
+        The method handles:
+            - Transport components between technologies (pipes, cables, etc.)
+            - Splitter and combiner connections with multiple inputs/outputs
+            - Storage system connections
+            - Feedstock connections
+            - Loop detection and solver configuration for coupled systems
+
+        Side Effects:
+            - Creates OpenMDAO connections between subsystems
+            - Adds transport components to the plant model
+            - Sets nonlinear and linear solvers if cycles are detected
+            - Enables auto_order for the plant model
+            - Attempts to create XDSM diagram if pyxdsm is available
+
+        Raises:
+            ValueError: If connection format is invalid.
+            ValueError: If resource models are inconsistent with connections.
+            KeyError: If specified technology is not found in configuration.
+            UserWarning: If commodity_stream technology is not in subgroup technologies.
+        """
         technology_interconnections = self.plant_config.get("technology_interconnections", [])
 
         combiner_counts = {}
@@ -1175,8 +1343,21 @@ class H2IntegrateModel:
                 print(f"Unable to create system XDSM diagram. Error: {e}")
 
     def create_driver_model(self):
-        """
-        Add the driver to the OpenMDAO model and add recorder.
+        """Configure the driver for the OpenMDAO problem.
+
+        This method sets up the optimization or analysis driver for the problem based on the
+        driver configuration. It configures:
+            - Driver type (e.g., optimizer, DOE)
+            - Objective functions
+            - Design variables
+            - Constraints
+            - Recorder for saving results
+
+        Side Effects:
+            - Configures self.prob.driver with appropriate settings
+            - Sets objective, design variables, and constraints
+            - Adds recorder to problem if specified in driver config
+            - Updates self.recorder_path with path to recorder file
         """
 
         myopt = PoseOptimization(self.driver_config)
@@ -1190,13 +1371,31 @@ class H2IntegrateModel:
             self.recorder_path = myopt.set_recorders(self.prob)
 
     def setup(self):
-        """
-        Extremely light wrapper to setup the OpenMDAO problem and track setup status.
+        """Setup the OpenMDAO problem and track setup status.
+
+        This method calls the OpenMDAO problem's setup() method, which allocates memory,
+        configures the model hierarchy, and prepares the problem for execution. It also
+        sets a flag to track that setup has been called.
+
+        Side Effects:
+            - Calls self.prob.setup()
+            - Sets self.setup_has_been_called to True
         """
         self.setup_has_been_called = True
         self.prob.setup()
 
     def run(self):
+        """Execute the OpenMDAO problem.
+
+        This method runs the configured driver (optimization, DOE, or analysis) on the model.
+        If setup() has not been called yet, it will be called automatically before running.
+
+        Side Effects:
+            - Calls self.prob.setup() if not already called
+            - Executes self.prob.run_driver()
+            - Computes all model outputs
+            - Saves results to recorder if configured
+        """
         # do model setup based on the driver config
         # might add a recorder, driver, set solver tolerances, etc
         if not self.setup_has_been_called:
@@ -1206,18 +1405,27 @@ class H2IntegrateModel:
         self.prob.run_driver()
 
     def post_process(self, summarize_sql=False, show_plots=False):
-        """
-        Post-process the results of the OpenMDAO model.
+        """Post-process and visualize the results of the OpenMDAO model.
 
-        Right now, this means printing the inputs and outputs to all systems in the model.
-        We currently exclude any variables with "resource_data" in the name, since those
-        are large dictionary variables that are not correctly formatted when printing.
+        This method provides several post-processing capabilities:
+            - Prints inputs and outputs for all systems in the model
+            - Summarizes recorder data to CSV format if requested
+            - Generates and displays plots from performance models if available
 
-        If `summarize_sql` is set to True and a recorder file was written, the results
-        in the recorder file will be summarized and saved as a .csv file.
+        Variables with "resource_data" in the name are excluded from printing since they
+        are large dictionary variables that are not correctly formatted for display.
 
-        Also, if `show_plots` is set to True, then any performance models with post-processing
-        plots available will be run and shown.
+        Args:
+            summarize_sql (bool, optional): If True and a recorder file exists, the results
+                in the recorder file will be summarized and saved as a CSV file.
+                Defaults to False.
+            show_plots (bool, optional): If True, any performance models with post-processing
+                plot methods will generate and display their plots. Defaults to False.
+
+        Side Effects:
+            - Prints model results to console
+            - Creates CSV summary file if summarize_sql=True and recorder exists
+            - Generates and displays plots if show_plots=True and models support plotting
         """
         # Use custom summary printer instead of OpenMDAO's built-in printing so we can
         # suppress internal value printing and display only mean values.
