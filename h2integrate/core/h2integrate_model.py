@@ -25,7 +25,96 @@ except ImportError:
 
 
 class H2IntegrateModel:
+    """Top-level model class for assembling and running an H2Integrate simulation.
+
+    ``H2IntegrateModel`` orchestrates the entire lifecycle of an H2Integrate
+    simulation: it loads and validates configuration files, registers built-in
+    and custom technology models, constructs the OpenMDAO problem hierarchy
+    (sites, plant, technologies, finance, and driver), wires the subsystems
+    together, and exposes convenience methods for setup, execution, and
+    post-processing.
+
+    The constructor performs the full model assembly sequence in order:
+
+    1. Load and validate configuration (driver, technology, plant).
+    2. Register supported and custom models.
+    3. Create site-level resource models.
+    4. Create the plant-level OpenMDAO group.
+    5. Instantiate technology performance, cost, control, and finance models.
+    6. Create system-level finance models.
+    7. Connect technology, resource, and finance subsystems.
+    8. Configure the OpenMDAO driver (optimizer / DOE) and recorder.
+
+    After construction the problem is ready for :meth:`setup` and :meth:`run`.
+
+    Args:
+        config_input (dict | str | pathlib.Path): Main configuration for the
+            H2Integrate system. Accepts either:
+
+            * A dictionary containing ``driver_config``, ``technology_config``,
+              and ``plant_config`` keys (each may be a nested dict or a file
+              path string).
+            * A string or ``Path`` pointing to a YAML file with the same
+              structure.
+
+    Attributes:
+        prob (openmdao.api.Problem): The assembled OpenMDAO problem instance.
+        model (openmdao.core.system.System): The root system of ``prob``.
+        plant (openmdao.api.Group): The plant-level group containing all
+            technology subsystems.
+        supported_models (dict): Mapping of model name to model class for
+            every built-in and custom model registered with this instance.
+        driver_config (dict): Validated driver configuration dictionary.
+        technology_config (dict): Validated technology configuration dictionary.
+        plant_config (dict): Validated plant configuration dictionary.
+        tech_names (list[str]): Ordered list of technology group names added
+            to the plant.
+        performance_models (list): OpenMDAO subsystem references for each
+            technology's performance model.
+        cost_models (list): OpenMDAO subsystem references for each
+            technology's cost model.
+        finance_models (list): OpenMDAO subsystem references for each
+            technology's finance model.
+        control_strategies (list): OpenMDAO subsystem references for each
+            technology's control strategy or dispatch rule set.
+        finance_subgroups (dict): Processed finance subgroup configurations
+            created by :meth:`create_finance_model`.
+        setup_has_been_called (bool): ``True`` after :meth:`setup` (or the
+            implicit setup inside :meth:`run`) has been called.
+        recorder_path (str | None): File path of the OpenMDAO case recorder
+            database, or ``None`` if no recorder was configured.
+        name (str | None): Name of the system from the main config.
+        system_summary (str | None): Summary description from the main config.
+
+    Raises:
+        NameError: If a technology name conflicts with reserved names
+            (``"site"``, ``"pipe"``, ``"cable"``).
+        ValueError: If required configuration keys are missing or invalid.
+        FileNotFoundError: If a referenced configuration or custom model file
+            cannot be found.
+
+    Example:
+        >>> model = H2IntegrateModel("main_config.yaml")
+        >>> model.setup()
+        >>> model.run()
+        >>> model.post_process(summarize_sql=True, show_plots=True)
+    """
+
     def __init__(self, config_input):
+        """Initialize the H2Integrate model by loading configs and assembling the system.
+
+        The constructor executes the full assembly pipeline: configuration
+        loading, custom-model registration, site/plant/technology/finance
+        model creation, inter-technology connections, and driver setup.
+        After this method returns the OpenMDAO problem is fully constructed
+        but has **not** yet been set up (i.e., ``prob.setup()`` has not been
+        called).
+
+        Args:
+            config_input (dict | str | pathlib.Path): Main configuration for
+                the H2Integrate system.  See the class-level docstring for
+                accepted formats.
+        """
         # read in config file; it's a yaml dict that looks like this:
         self.load_config(config_input)
 
@@ -415,6 +504,42 @@ class H2IntegrateModel:
         self.plant = self.model.add_subsystem("plant", plant_group, promotes=["*"])
 
     def create_technology_models(self):
+        """Instantiate and register OpenMDAO subsystems for every technology.
+
+        Iterates over ``self.technology_config["technologies"]`` and, for each
+        technology entry, creates an OpenMDAO ``Group`` under the plant model.
+        Inside that group the method adds:
+
+        * **Performance model** - the core physics / engineering model.
+        * **Cost model** - capital and operating expenditure calculations.
+        * **Finance model** - (optional) technology-specific financial model.
+        * **Control strategy / dispatch rule set** - (optional) operational
+          control logic.
+
+        Some legacy models (listed in ``combined_performance_and_cost_models``)
+        use a single class for both performance and cost; this method detects
+        that case and avoids double-instantiation.
+
+        Special handling is provided for ``FeedstockPerformanceModel`` and
+        ``FeedstockCostModel``, which are added directly to the plant group
+        rather than nested inside a technology group.
+
+        Raises:
+            NameError: If any technology is named ``"site"``, ``"pipe"``, or
+                ``"cable"`` - these names are reserved.
+            ValueError: If ``tech_name`` in ``control_parameters`` does not
+                match the top-level technology group name.
+
+        Side Effects:
+            Populates the following instance attributes:
+
+            * ``self.tech_names`` - ordered list of technology group names.
+            * ``self.performance_models`` - list of performance subsystems.
+            * ``self.cost_models`` - list of cost subsystems.
+            * ``self.finance_models`` - list of finance subsystems.
+            * ``self.control_strategies`` - list of control / dispatch subsystems.
+            * ``self.dispatch_rule_sets`` - list of dispatch rule set subsystems.
+        """
         # Loop through each technology and instantiate an OpenMDAO object (assume it exists)
         # for each technology
 
@@ -572,7 +697,29 @@ class H2IntegrateModel:
                 self.plant.add_subsystem(tech_name, comp)
 
     def _process_model(self, model_type, individual_tech_config, tech_group):
-        # Generalized function to process model definitions
+        """Look up a model class and add it as a subsystem of a technology group.
+
+        This is a convenience helper used by :meth:`create_technology_models` to
+        avoid repeating the lookup-instantiate-add pattern for every model type
+        (performance, cost, control strategy, dispatch rule set).
+
+        Args:
+            model_type (str): Key into ``individual_tech_config`` that
+                identifies the model definition block (e.g.,
+                ``"performance_model"``, ``"cost_model"``,
+                ``"control_strategy"``, ``"dispatch_rule_set"``).
+            individual_tech_config (dict): Full configuration dictionary for a
+                single technology, as stored under
+                ``technology_config["technologies"][<tech_name>]``.
+            tech_group (openmdao.api.Group): The OpenMDAO group representing
+                the parent technology into which the new subsystem will be
+                added.
+
+        Returns:
+            openmdao.core.system.System: The OpenMDAO subsystem instance that
+            was added to ``tech_group``.  All inputs and outputs of the new
+            subsystem are promoted to the technology group level.
+        """
         model_name = individual_tech_config[model_type]["model"]
         model_object = self.supported_models[model_name]
         om_model_object = tech_group.add_subsystem(
@@ -948,6 +1095,50 @@ class H2IntegrateModel:
         self.finance_subgroups = finance_subgroups
 
     def connect_technologies(self):
+        """Wire all inter-technology, resource-to-technology, and finance connections.
+
+        This method reads three connection lists from the plant configuration and
+        creates the corresponding OpenMDAO ``connect`` calls:
+
+        1. **technology_interconnections** - connections between technology
+           groups, optionally routed through transport models (pipes, cables).
+           Supports 4-element entries ``[source, dest, item, transport_type]``
+           for transported connections and 3-element entries
+           ``[source, dest, parameter]`` for direct variable connections.
+           Special handling is provided for splitter and combiner technologies
+           which use indexed port names.
+
+        2. **resource_to_tech_connections** - connections from site-level
+           resource models to technology inputs as 3-element entries
+           ``[resource_name, tech_name, variable]``.
+
+        3. **Finance connections** - automatically connects each technology's
+           ``CapEx``, ``OpEx``, ``VarOpEx``, ``cost_year``, and (where
+           applicable) ``replacement_schedule``, ``rated_<commodity>_production``,
+           and ``capacity_factor`` outputs to the appropriate finance subgroup
+           inputs.
+
+        Additionally, the method:
+
+        * Detects cyclic dependencies among technologies using ``networkx``
+          and, if cycles are found, adds ``NonlinearBlockGS`` and
+          ``DirectSolver`` to the plant group.
+        * Connects ``tech_to_dispatch_connections`` for dispatch-rule
+          block functions.
+        * Attempts to generate an XDSM diagram of the system when the
+          ``pyxdsm`` package is available.
+
+        Raises:
+            ValueError: If a connection entry has an unexpected length, if
+                resource models and ``resource_to_tech_connections`` are
+                inconsistent, or if a ``tech_to_dispatch_connections`` entry
+                is malformed.
+
+        Side Effects:
+            * Creates transport subsystems in the plant group.
+            * Sets ``self.plant.options["auto_order"] = True``.
+            * May attach nonlinear and linear solvers to the plant group.
+        """
         technology_interconnections = self.plant_config.get("technology_interconnections", [])
 
         combiner_counts = {}
@@ -1221,8 +1412,24 @@ class H2IntegrateModel:
                 print(f"Unable to create system XDSM diagram. Error: {e}")
 
     def create_driver_model(self):
-        """
-        Add the driver to the OpenMDAO model and add recorder.
+        """Configure the OpenMDAO driver, design variables, objective, constraints, and recorder.
+
+        Instantiates a :class:`~h2integrate.core.pose_optimization.PoseOptimization`
+        helper and delegates driver setup to it.  If the ``driver_config``
+        contains a ``"driver"`` key the method will:
+
+        * Set the optimization or DOE driver on the problem.
+        * Register the objective function.
+        * Register all design variables.
+        * Register all constraints.
+
+        If a ``"recorder"`` key is present in the driver configuration, an
+        OpenMDAO case recorder is attached to the problem and the path to the
+        resulting SQLite file is saved to ``self.recorder_path``.
+
+        Side Effects:
+            * Modifies ``self.prob.driver``.
+            * May set ``self.recorder_path`` to the recorder file path.
         """
 
         myopt = PoseOptimization(self.driver_config)
@@ -1236,13 +1443,34 @@ class H2IntegrateModel:
             self.recorder_path = myopt.set_recorders(self.prob)
 
     def setup(self):
-        """
-        Extremely light wrapper to setup the OpenMDAO problem and track setup status.
+        """Set up the OpenMDAO problem and mark the model as ready to run.
+
+        Delegates to ``self.prob.setup()`` which finalises the model hierarchy,
+        allocates memory for all variables, and performs connection validation.
+        This must be called before :meth:`run` unless :meth:`run` is invoked
+        directly (in which case it calls ``setup`` automatically).
+
+        Side Effects:
+            * Calls ``self.prob.setup()``.
+            * Sets ``self.setup_has_been_called`` to ``True``.
         """
         self.setup_has_been_called = True
         self.prob.setup()
 
     def run(self):
+        """Execute the H2Integrate simulation.
+
+        If :meth:`setup` has not been called yet, this method calls it
+        automatically before running the driver.  Execution is delegated to
+        ``self.prob.run_driver()``, which will invoke the configured
+        optimizer, DOE, or single-run driver.
+
+        Side Effects:
+            * Calls ``self.prob.setup()`` if it has not already been called.
+            * Sets ``self.setup_has_been_called`` to ``True``.
+            * Executes the full OpenMDAO driver loop, populating all model
+              outputs.
+        """
         # do model setup based on the driver config
         # might add a recorder, driver, set solver tolerances, etc
         if not self.setup_has_been_called:
@@ -1252,18 +1480,23 @@ class H2IntegrateModel:
         self.prob.run_driver()
 
     def post_process(self, summarize_sql=False, show_plots=False):
-        """
-        Post-process the results of the OpenMDAO model.
+        """Post-process and display the results of the simulation.
 
-        Right now, this means printing the inputs and outputs to all systems in the model.
-        We currently exclude any variables with "resource_data" in the name, since those
-        are large dictionary variables that are not correctly formatted when printing.
+        Prints a formatted summary of all model inputs and outputs (excluding
+        large ``resource_data`` dictionaries) using :meth:`print_results`.
+        Optionally converts the OpenMDAO case recorder database to a CSV
+        summary and/or generates technology-specific plots.
 
-        If `summarize_sql` is set to True and a recorder file was written, the results
-        in the recorder file will be summarized and saved as a .csv file.
-
-        Also, if `show_plots` is set to True, then any performance models with post-processing
-        plots available will be run and shown.
+        Args:
+            summarize_sql (bool, optional): If ``True`` and a recorder file
+                was written during the run, convert the SQLite recorder
+                database to a CSV summary file using
+                :func:`~h2integrate.postprocess.sql_to_csv.convert_sql_to_csv_summary`.
+                Defaults to ``False``.
+            show_plots (bool, optional): If ``True``, call the
+                ``post_process`` method on every performance model that
+                exposes one, and display the resulting ``matplotlib`` figures.
+                Defaults to ``False``.
         """
         # Use custom summary printer instead of OpenMDAO's built-in printing so we can
         # suppress internal value printing and display only mean values.
@@ -1280,10 +1513,39 @@ class H2IntegrateModel:
 
     @staticmethod
     def print_results(model, includes=None, excludes=None, show_units=True):
-        """Print hierarchical inputs plus explicit/implicit outputs (means only) using Rich.
+        """Print a hierarchical summary of model inputs and outputs using Rich tables.
 
-        Order of rows preserves OpenMDAO's original ordering from list_inputs/list_outputs.
-        Group rows are emitted lazily the first time a variable within that path appears.
+        Queries the OpenMDAO model for all explicit inputs, explicit outputs,
+        and implicit outputs, then renders each section as a formatted
+        ``rich.table.Table`` to the console.  For array-valued variables only
+        the **mean** is displayed; scalar variables are shown as-is.
+
+        Row ordering mirrors the original OpenMDAO ``list_inputs`` /
+        ``list_outputs`` ordering.  Group header rows are emitted lazily the
+        first time a variable belonging to that subsystem path appears.
+
+        Args:
+            model (openmdao.core.system.System): The OpenMDAO system (or
+                sub-system) whose variables should be printed.
+            includes (list[str] | None, optional): Glob patterns for variable
+                names to include.  ``None`` (default) includes everything.
+            excludes (list[str] | None, optional): Glob patterns for variable
+                names to exclude.  ``None`` (default) excludes nothing.
+            show_units (bool, optional): If ``True`` (default), display a
+                *Units* column in each table.
+
+        Returns:
+            dict: A dictionary with three keys:
+
+            * ``"inputs"`` - structured metadata for every input variable.
+            * ``"explicit_outputs"`` - structured metadata for explicit
+              outputs.
+            * ``"implicit_outputs"`` - structured metadata for implicit
+              outputs.
+
+            Each value is itself a ``dict`` mapping absolute variable names to
+            dictionaries containing ``"mean"``, ``"shape"``,
+            ``"promoted_name"``, and (optionally) ``"units"``.
         """
 
         def _gather_outputs(explicit=True, implicit=False):
