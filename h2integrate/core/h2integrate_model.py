@@ -1411,8 +1411,9 @@ class H2IntegrateModel:
     def _connect_system_level_controller(self):
         """Create OpenMDAO connections between the controller and technology I/O.
 
-        Wires fixed producer outputs to controller inputs and controller
-        storage dispatch outputs to storage set_point inputs.
+        Wires fixed producer outputs to controller inputs, controller
+        storage dispatch outputs to storage set_point inputs, and controller
+        dispatchable dispatch outputs to dispatchable producer demand inputs.
         """
         slc_config = self.plant_config.get("system_level_control")
         if slc_config is None:
@@ -1420,11 +1421,18 @@ class H2IntegrateModel:
 
         for stream_name, stream_cfg in slc_config["commodity_streams"].items():
             for entry in stream_cfg.get("producers", []):
-                if entry.get("role") == "fixed":
-                    tech = entry["tech"]
+                tech = entry["tech"]
+                role = entry.get("role")
+
+                if role == "fixed":
                     self.model.connect(
                         f"{tech}.{stream_name}_out",
                         f"system_level_controller.{tech}_{stream_name}_available",
+                    )
+                elif role == "dispatchable":
+                    self.model.connect(
+                        f"system_level_controller.{tech}_{stream_name}_dispatch",
+                        f"{tech}.{stream_name}_demand",
                     )
 
             for entry in stream_cfg.get("storage", []):

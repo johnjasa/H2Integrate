@@ -49,18 +49,30 @@ class SystemLevelController(om.ExplicitComponent):
         self.n_timesteps = plant_config["plant"]["simulation"]["n_timesteps"]
 
         # Parse commodity stream topology
+        self._stream_names = list(slc_config["commodity_streams"].keys())
         self._fixed_producers = []  # [(tech, commodity)]
+        self._dispatchable_producers = []  # [(tech, commodity)]
         self._storage_techs = []  # [(tech, commodity, params_dict)]
         self._demand_profiles = {}  # {commodity: demand_array}
 
         for stream_name, stream_cfg in slc_config["commodity_streams"].items():
             # Fixed producers: create an input for each
             for entry in stream_cfg.get("producers", []):
-                if entry.get("role") == "fixed":
-                    tech = entry["tech"]
+                tech = entry["tech"]
+                role = entry.get("role")
+
+                if role == "fixed":
                     self._fixed_producers.append((tech, stream_name))
                     self.add_input(
                         f"{tech}_{stream_name}_available",
+                        shape=self.n_timesteps,
+                        units=stream_cfg.get("units", None),
+                        val=0.0,
+                    )
+                elif role == "dispatchable":
+                    self._dispatchable_producers.append((tech, stream_name))
+                    self.add_output(
+                        f"{tech}_{stream_name}_dispatch",
                         shape=self.n_timesteps,
                         units=stream_cfg.get("units", None),
                         val=0.0,
@@ -111,7 +123,7 @@ class SystemLevelController(om.ExplicitComponent):
 
     def compute(self, inputs, outputs):
         """Run heuristic dispatch for each commodity stream."""
-        for stream_name in {s for _, s in self._fixed_producers}:
+        for stream_name in self._stream_names:
             self._dispatch_stream(stream_name, inputs, outputs)
 
     def _dispatch_stream(self, stream_name, inputs, outputs):
@@ -121,7 +133,7 @@ class SystemLevelController(om.ExplicitComponent):
           1. Use fixed production
           2. Discharge storage to fill remaining demand
           3. Charge storage with excess production
-          4. Any remaining gap is left for other technologies
+          4. Dispatchable producers fill any remaining gap
         """
         n = self.n_timesteps
 
@@ -133,6 +145,9 @@ class SystemLevelController(om.ExplicitComponent):
 
         # Get demand for this stream
         demand = self._demand_profiles.get(stream_name, np.zeros(n))
+
+        # Track remaining gap after storage dispatch
+        remaining_gap = np.maximum(demand - total_fixed, 0.0)
 
         # Dispatch each storage tech
         for tech, sname, params in self._storage_techs:
@@ -159,6 +174,7 @@ class SystemLevelController(om.ExplicitComponent):
                     discharge = min(gap, max_discharge, max(0.0, available_energy))
                     dispatch[t] = discharge
                     soc -= discharge / discharge_eff
+                    remaining_gap[t] = gap - discharge
                 else:
                     # Excess — charge storage
                     excess = -gap
@@ -166,5 +182,19 @@ class SystemLevelController(om.ExplicitComponent):
                     charge = min(excess, max_charge, max(0.0, room))
                     dispatch[t] = -charge
                     soc += charge * charge_eff
+                    remaining_gap[t] = 0.0
 
             outputs[f"{tech}_{stream_name}_dispatch"] = dispatch
+
+        # Dispatch dispatchable producers to fill remaining gap
+        dispatchable_in_stream = [
+            (tech, sname) for tech, sname in self._dispatchable_producers if sname == stream_name
+        ]
+
+        if len(dispatchable_in_stream) == 1:
+            tech, _ = dispatchable_in_stream[0]
+            outputs[f"{tech}_{stream_name}_dispatch"] = remaining_gap
+        elif len(dispatchable_in_stream) > 1:
+            per_tech = remaining_gap / len(dispatchable_in_stream)
+            for tech, _ in dispatchable_in_stream:
+                outputs[f"{tech}_{stream_name}_dispatch"] = per_tech

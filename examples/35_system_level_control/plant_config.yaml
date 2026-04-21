@@ -19,7 +19,6 @@ technology_interconnections:
   - [wind, elec_combiner, electricity, cable]
   - [battery, elec_combiner, electricity, cable]
   - [elec_combiner, electrical_load_demand, electricity, cable]
-  - [electrical_load_demand, grid_buy, [unmet_electricity_demand_out, electricity_demand]]
 resource_to_tech_connections:
   - [site.wind_resource, wind, wind_resource_data]
 # System-level control: declares which technologies participate in
