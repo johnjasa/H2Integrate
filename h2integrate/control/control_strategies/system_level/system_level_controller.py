@@ -5,12 +5,12 @@ A standalone ``om.ExplicitComponent`` that coordinates dispatch across
 multiple technologies using simple heuristic logic to meet demand.
 
 The controller:
-  - Reads available production from fixed producers (e.g., wind)
+  - Reads available production from fixed producers
   - Reads demand profiles and storage parameters from config
   - Outputs dispatch commands (set_points) to storage technologies
 
-The grid fills any remaining gap through the existing ``technology_interconnections``
-wiring (unmet demand flows to the grid naturally).
+Any remaining gap after storage dispatch is left for other technologies
+connected through the existing ``technology_interconnections`` wiring.
 
 This controller is **not** tied to any specific technology's config and does
 **not** use the Pyomo optimization framework.
@@ -23,12 +23,12 @@ import openmdao.api as om
 class SystemLevelController(om.ExplicitComponent):
     """Heuristic dispatch controller for meeting demand across technologies.
 
-    Reads wind (or other fixed producer) output, determines the gap between
-    production and demand, and dispatches storage accordingly:
+    Reads fixed producer output, determines the gap between production and
+    demand, and dispatches storage accordingly:
 
       1. If production > demand: charge storage with excess
       2. If production < demand: discharge storage to fill gap
-      3. Any remaining gap is left for the grid (via existing wiring)
+      3. Any remaining gap is left for other technologies (via existing wiring)
 
     The controller reads its topology and parameters from
     ``plant_config["system_level_control"]`` and storage parameters from
@@ -118,10 +118,10 @@ class SystemLevelController(om.ExplicitComponent):
         """Heuristic dispatch for a single commodity stream.
 
         Priority order:
-          1. Use fixed production (wind, solar)
+          1. Use fixed production
           2. Discharge storage to fill remaining demand
           3. Charge storage with excess production
-          4. Any remaining gap is left for the grid
+          4. Any remaining gap is left for other technologies
         """
         n = self.n_timesteps
 
@@ -154,13 +154,13 @@ class SystemLevelController(om.ExplicitComponent):
                 gap = demand[t] - total_fixed[t]
 
                 if gap > 0:
-                    # Need more — discharge battery
+                    # Need more — discharge storage
                     available_energy = (soc - min_soc) * discharge_eff
                     discharge = min(gap, max_discharge, max(0.0, available_energy))
                     dispatch[t] = discharge
                     soc -= discharge / discharge_eff
                 else:
-                    # Excess — charge battery
+                    # Excess — charge storage
                     excess = -gap
                     room = (max_soc - soc) / charge_eff if charge_eff > 0 else 0.0
                     charge = min(excess, max_charge, max(0.0, room))

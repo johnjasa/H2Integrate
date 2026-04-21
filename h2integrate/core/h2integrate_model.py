@@ -20,9 +20,8 @@ from h2integrate.core.inputs.validation import load_tech_yaml, load_plant_yaml, 
 from h2integrate.core.pose_optimization import PoseOptimization
 from h2integrate.postprocess.sql_to_csv import convert_sql_to_csv_summary
 from h2integrate.control.system_level_control import (
-    add_system_level_controller,
-    prepare_system_level_control,
-    connect_system_level_controller,
+    get_all_slc_tech_names,
+    validate_system_level_control,
 )
 from h2integrate.core.commodity_stream_definitions import (
     multivariable_streams,
@@ -74,9 +73,8 @@ class H2IntegrateModel:
         # it will need plant_config but not driver or tech config
         self.create_plant_model()
 
-        # prepare system-level control (if configured)
-        # validates the system_level_control config section
-        prepare_system_level_control(self.technology_config, self.plant_config)
+        # validate system-level control config (if configured)
+        self._validate_system_level_control()
 
         # create technology models
         # these are OpenMDAO groups that contain all the components for each technology
@@ -84,8 +82,7 @@ class H2IntegrateModel:
         self.create_technology_models()
 
         # add system-level controller (if configured)
-        # this adds a standalone controller component to the plant group
-        add_system_level_controller(self.plant, self.plant_config, self.technology_config)
+        self._add_system_level_controller()
 
         self.create_finance_model()
 
@@ -93,9 +90,6 @@ class H2IntegrateModel:
         # technologies are connected within the `technology_interconnections` section of the
         # plant config
         self.connect_technologies()
-
-        # connect system-level controller I/O to technology I/O
-        connect_system_level_controller(self.model, self.plant_config)
 
         # create driver model
         # might be an analysis or optimization
@@ -1323,6 +1317,9 @@ class H2IntegrateModel:
                             f"finance_subgroup_{group_id}.replacement_schedule_{tech_name}",
                         )
 
+        # connect system-level controller I/O to technology I/O
+        self._connect_system_level_controller()
+
         self.plant.options["auto_order"] = True
 
         # Check if there are any loops in the technology interconnections
@@ -1363,6 +1360,79 @@ class H2IntegrateModel:
                         f"{tech_name}.dispatch_block_rule_function",
                         f"{dispatching_tech_name}.dispatch_block_rule_function_{tech_name}",
                     )
+
+    def _validate_system_level_control(self):
+        """Validate the system_level_control config section if present.
+
+        Checks that the config is well-formed and that no technologies appear
+        in both ``system_level_control`` and ``tech_to_dispatch_connections``.
+        """
+        slc_config = self.plant_config.get("system_level_control")
+        if slc_config is None:
+            return
+
+        validate_system_level_control(slc_config, self.technology_config)
+
+        # Check mutual exclusivity with existing tech_to_dispatch_connections
+        existing_dispatch = self.plant_config.get("tech_to_dispatch_connections", [])
+        existing_dispatch_techs = {conn[0] for conn in existing_dispatch if len(conn) >= 1}
+
+        slc_techs = get_all_slc_tech_names(slc_config)
+        overlap = slc_techs & existing_dispatch_techs
+        if overlap:
+            raise ValueError(
+                f"Technologies {sorted(overlap)} appear in both 'system_level_control' "
+                f"and 'tech_to_dispatch_connections'. A technology can only be under "
+                f"one dispatch control mechanism. Remove the duplicates from one section."
+            )
+
+    def _add_system_level_controller(self):
+        """Add the ``SystemLevelController`` component to the plant group.
+
+        Called after ``create_technology_models()`` so that all technology
+        subsystems already exist.
+        """
+        slc_config = self.plant_config.get("system_level_control")
+        if slc_config is None:
+            return
+
+        from h2integrate.control.control_strategies.system_level.system_level_controller import (
+            SystemLevelController,
+        )
+
+        self.plant.add_subsystem(
+            "system_level_controller",
+            SystemLevelController(
+                plant_config=self.plant_config,
+                technology_config=self.technology_config,
+            ),
+        )
+
+    def _connect_system_level_controller(self):
+        """Create OpenMDAO connections between the controller and technology I/O.
+
+        Wires fixed producer outputs to controller inputs and controller
+        storage dispatch outputs to storage set_point inputs.
+        """
+        slc_config = self.plant_config.get("system_level_control")
+        if slc_config is None:
+            return
+
+        for stream_name, stream_cfg in slc_config["commodity_streams"].items():
+            for entry in stream_cfg.get("producers", []):
+                if entry.get("role") == "fixed":
+                    tech = entry["tech"]
+                    self.model.connect(
+                        f"{tech}.{stream_name}_out",
+                        f"system_level_controller.{tech}_{stream_name}_available",
+                    )
+
+            for entry in stream_cfg.get("storage", []):
+                tech = entry["tech"]
+                self.model.connect(
+                    f"system_level_controller.{tech}_{stream_name}_dispatch",
+                    f"{tech}.{stream_name}_set_point",
+                )
 
     def create_driver_model(self):
         """
