@@ -27,18 +27,13 @@ resource_to_tech_connections:
 # A standalone SystemLevelController component is added to the plant
 # group and wired to the participating technologies automatically.
 system_level_control:
-  commodity_streams:
-    electricity:
-      units: kW
-      producers:
-        - tech: wind
-          role: fixed  # wind output is non-controllable for now
-        - tech: grid_buy
-          role: dispatchable  # grid can provide any amount up to limit
-      storage:
-        - tech: battery
-      demands:
-        - tech: electrical_load_demand
+  control_model: load_following
+  control_parameters:
+    # the controller will dispatch the wind and battery to meet the demand
+    # and minimize grid purchases, but the grid is available to fill any remaining gap
+    commodity: electricity
+    technologies: [wind, battery, grid_buy]  # could be optional
+    demand_technology: electrical_load_demand
 finance_parameters:
   finance_groups:
     profast_model:
