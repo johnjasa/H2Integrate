@@ -24,6 +24,7 @@ from h2integrate.core.commodity_stream_definitions import (
     multivariable_streams,
     is_electricity_producer,
 )
+from h2integrate.control.control_strategies.passthrough_controller import PassthroughController
 from h2integrate.control.control_strategies.system_level.solver_options import (
     SLCSolverOptionsConfig,
 )
@@ -757,6 +758,9 @@ class H2IntegrateModel:
                 )
 
             # Connect the controller's output back to the technology.
+            # All controllable techs now have a tech-level controller
+            # (explicit or PassthroughController) that accepts a
+            # ``{commodity}_demand`` input and outputs ``{commodity}_set_point``.
             if slc_config["storage_techs_to_control"].get(tech_name, False):
                 # Storage tech with its own sub-controller: provide a demand
                 # signal that the sub-controller translates into
@@ -766,11 +770,12 @@ class H2IntegrateModel:
                     f"{tech_name}.{commodity}_demand",
                 )
             else:
-                # All other techs (or storage without a sub-controller):
-                # provide a set-point directly to the performance model.
+                # Flexible, dispatchable, and storage techs (without a
+                # sub-controller) have a PassthroughController that
+                # receives demand and forwards it as a set-point.
                 self.plant.connect(
                     f"system_level_controller.{tech_name}_{commodity}_set_point",
-                    f"{tech_name}.{commodity}_set_point",
+                    f"{tech_name}.{commodity}_demand",
                 )
 
         # --- Step 4: Connect marginal-cost inputs (cost-aware strategies) -
@@ -925,6 +930,11 @@ class H2IntegrateModel:
                     self.cost_models.append(om_model_object)
                     self.finance_models.append(om_model_object)
 
+                    # Add PassthroughController for combined models that are
+                    # controllable but have no explicit control_strategy
+                    if "control_strategy" not in individual_tech_config:
+                        self._add_passthrough_controllers(tech_name, tech_group)
+
                     continue
 
                 # Process the models
@@ -948,7 +958,7 @@ class H2IntegrateModel:
                         getattr(self, plural_model_type_name).append(om_model_object)
 
                         # Collect control classifier for system-level control
-                        if model_type == "performance_model" and self.slc:
+                        if model_type == "performance_model":
                             perf_cls = self.supported_models.get(perf_model)
                             if perf_cls is not None:
                                 classifier = getattr(perf_cls, "_control_classifier", None)
@@ -974,6 +984,11 @@ class H2IntegrateModel:
                                 promotes=["*"],
                             )
                             self.finance_models.append(finance_object)
+
+                # Add PassthroughController for techs that are controllable
+                # but have no explicit control_strategy
+                if "control_strategy" not in individual_tech_config:
+                    self._add_passthrough_controllers(tech_name, tech_group)
 
         for tech_name, individual_tech_config in self.technology_config["technologies"].items():
             cost_model = individual_tech_config.get("cost_model", {}).get("model")
@@ -1026,6 +1041,39 @@ class H2IntegrateModel:
         if not hasattr(model_object, "_control_classifier"):
             msg = f"Model {model_name} is missing a control classifier"
             raise ValueError(msg)
+
+    def _add_passthrough_controllers(self, tech_name, tech_group):
+        """Add PassthroughController(s) to a technology group if appropriate.
+
+        A PassthroughController is added for each commodity produced by the
+        technology, provided the technology's control classifier is not
+        ``"fixed"``, ``"feedstock"``, or ``"connector"``.
+
+        The controller receives ``{commodity}_demand`` and outputs
+        ``{commodity}_set_point``, providing a uniform interface between the
+        system-level controller and the performance model.  When no SLC is
+        connected the demand defaults to a very large value so production is
+        unconstrained.
+
+        Args:
+            tech_name (str): Name of the technology.
+            tech_group (om.Group): The OpenMDAO group for this technology.
+        """
+        classifier = self.tech_control_classifiers.get(tech_name)
+        no_controller_classifiers = (None, "fixed", "feedstock", "connector")
+        if classifier in no_controller_classifiers:
+            return
+
+        commodities = self._get_commodity_for_tech(tech_name)
+        n_timesteps = int(self.plant_config["plant"]["simulation"]["n_timesteps"])
+
+        for commodity in commodities:
+            controller = PassthroughController(commodity=commodity, n_timesteps=n_timesteps)
+            tech_group.add_subsystem(
+                f"{commodity}_passthrough_controller",
+                controller,
+                promotes=["*"],
+            )
 
     def create_finance_model(self):
         """

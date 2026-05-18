@@ -23,15 +23,9 @@ class ElectrolyzerPerformanceBaseClass(ResizeablePerformanceModelBaseClass):
         # Define inputs for electricity
         self.add_input("electricity_in", val=0.0, shape=self.n_timesteps, units="kW")
 
-        # Dispatchable models receive a set_point from the system-level controller
-        if "system_level_control" in self.options["plant_config"]:
-            self.add_input(
-                f"{self.commodity}_set_point",
-                val=0.0,
-                shape=self.n_timesteps,
-                units=self.commodity_rate_units,
-                desc=f"Set point for {self.commodity} production from SLC",
-            )
+        # set_point input is now provided by the base class for dispatchable
+        # models (PerformanceModelBaseClass.setup) and connected through the
+        # tech-level controller.  No conditional addition needed here.
 
     def compute(self, inputs, outputs):
         """

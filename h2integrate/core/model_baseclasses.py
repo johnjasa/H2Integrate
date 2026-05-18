@@ -99,15 +99,22 @@ class PerformanceModelBaseClass(om.ExplicitComponent):
         # operational life of the technology if the technology cannot be replaced
         self.add_output("operational_life", val=self.plant_life, units="yr")
 
-        # Flexible models get additional I/O for set_point-based curtailment
-        if getattr(self, "_control_classifier", None) == "flexible":
+        # Flexible and dispatchable models get a set_point input from a
+        # tech-level controller (PassthroughController or explicit control_strategy).
+        # Default to a very large value so production is unconstrained when
+        # no controller or SLC is connected.
+        _classifier = getattr(self, "_control_classifier", None)
+        if _classifier in ("flexible", "dispatchable"):
             self.add_input(
                 f"{self.commodity}_set_point",
-                val=1.0,
+                val=1e30,
                 shape=self.n_timesteps,
                 units=self.commodity_rate_units,
                 desc=f"Set point for {self.commodity} production (curtailment limit)",
             )
+
+        # Flexible models additionally track uncurtailed output
+        if _classifier == "flexible":
             self.add_output(
                 f"uncurtailed_{self.commodity}_out",
                 val=1.0,
@@ -126,19 +133,18 @@ class PerformanceModelBaseClass(om.ExplicitComponent):
         Should be called at the end of each flexible model's ``compute()`` method
         after the raw production has been written to ``outputs[f"{commodity}_out"]``.
         """
-        if "system_level_control" in self.options["plant_config"]:
-            if getattr(self, "_control_classifier", None) != "flexible":
-                return
+        if getattr(self, "_control_classifier", None) != "flexible":
+            return
 
-            commodity_out_key = f"{self.commodity}_out"
-            uncurtailed_key = f"uncurtailed_{self.commodity}_out"
-            set_point_key = f"{self.commodity}_set_point"
+        commodity_out_key = f"{self.commodity}_out"
+        uncurtailed_key = f"uncurtailed_{self.commodity}_out"
+        set_point_key = f"{self.commodity}_set_point"
 
-            uncurtailed = np.array(outputs[commodity_out_key])
-            outputs[uncurtailed_key] = uncurtailed
+        uncurtailed = np.array(outputs[commodity_out_key])
+        outputs[uncurtailed_key] = uncurtailed
 
-            set_point = self._inputs[set_point_key]
-            outputs[commodity_out_key] = np.minimum(uncurtailed, set_point)
+        set_point = self._inputs[set_point_key]
+        outputs[commodity_out_key] = np.minimum(uncurtailed, set_point)
 
     def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
         """
