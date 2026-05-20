@@ -102,14 +102,9 @@ class NaturalGasPerformanceModel(PerformanceModelBaseClass):
             desc="Natural gas plant rated capacity in MW",
         )
 
-        # Default the electricity set point input as the rated capacity
-        self.add_input(
-            f"{self.commodity}_set_point",
-            val=self.config.system_capacity_mw,
-            shape=n_timesteps,
-            units=self.commodity_rate_units,
-            desc="Electricity set point for natural gas plant",
-        )
+        # set_point input is now provided by the base class for dispatchable
+        # models (PerformanceModelBaseClass.setup) and connected through the
+        # tech-level controller.
 
         # Add natural gas input, default to 0 --> set using feedstock component
         self.add_input(

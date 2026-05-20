@@ -90,14 +90,9 @@ class LinearH2FuelCellPerformanceModel(PerformanceModelBaseClass):
             desc="Mass flow rate of hydrogen consumed by the fuel cell",
         )
 
-        # Default the electricity set point input as the rated capacity
-        self.add_input(
-            f"{self.commodity}_set_point",
-            val=self.config.system_capacity_kw,
-            shape=self.n_timesteps,
-            units=self.commodity_rate_units,
-            desc="Electricity set point for natural gas plant",
-        )
+        # set_point input is now provided by the base class for dispatchable
+        # models (PerformanceModelBaseClass.setup) and connected through the
+        # tech-level controller.
 
     def compute(self, inputs, outputs):
         """

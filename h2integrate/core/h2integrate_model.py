@@ -1075,11 +1075,25 @@ class H2IntegrateModel:
         if classifier in no_controller_classifiers:
             return
 
+        # Look up commodity_rate_units from the already-instantiated performance
+        # model subsystem so the PassthroughController can use explicit units on
+        # its demand input (units_by_conn fails on unconnected variables).
+        commodity_rate_units_map = {}
+        for subsys_info in tech_group._static_subsystems_allprocs.values():
+            subsys = subsys_info.system
+            if hasattr(subsys, "commodity_rate_units") and hasattr(subsys, "commodity"):
+                commodity_rate_units_map[subsys.commodity] = subsys.commodity_rate_units
+
         commodities = self._get_commodity_for_tech(tech_name)
         n_timesteps = int(self.plant_config["plant"]["simulation"]["n_timesteps"])
 
         for commodity in commodities:
-            controller = PassthroughController(commodity=commodity, n_timesteps=n_timesteps)
+            units = commodity_rate_units_map.get(commodity)
+            controller = PassthroughController(
+                commodity=commodity,
+                n_timesteps=n_timesteps,
+                commodity_rate_units=units,
+            )
             tech_group.add_subsystem(
                 f"{commodity}_passthrough_controller",
                 controller,

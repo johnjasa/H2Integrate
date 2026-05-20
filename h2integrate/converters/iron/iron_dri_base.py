@@ -76,14 +76,9 @@ class IronReductionPlantBasePerformanceComponent(PerformanceModelBaseClass):
                 desc=f"{feedstock} consumed for iron reduction",
             )
 
-        # Default the sponge iron set point input as the rated capacity
-        self.add_input(
-            "sponge_iron_set_point",
-            val=self.config.sponge_iron_production_rate_tonnes_per_hr,
-            shape=n_timesteps,
-            units="t/h",
-            desc="Pig iron set point for iron plant",
-        )
+        # set_point input is now provided by the base class for dispatchable
+        # models (PerformanceModelBaseClass.setup) and connected through the
+        # tech-level controller.
 
         coeff_fpath = ROOT_DIR / "converters" / "iron" / "rosner" / "perf_coeffs.csv"
         # rosner dri performance model

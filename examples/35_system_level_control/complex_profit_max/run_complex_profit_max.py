@@ -76,20 +76,20 @@ h2i.setup()
 
 # Override demand profile
 h2i.prob.set_val(
-    "plant.electrical_load_demand.electricity_demand",
+    "electrical_load_demand.electricity_demand",
     demand_profile,
 )
 
 # Override sell price with time-varying profile
 h2i.prob.set_val(
-    "plant.system_level_controller.commodity_sell_price",
+    "system_level_controller.commodity_sell_price",
     sell_price,
     units="USD/(kW*h)",
 )
 
 # Override grid buy price with time-varying profile
 h2i.prob.set_val(
-    "plant.grid_buy.electricity_buy_price",
+    "grid_buy.electricity_buy_price",
     grid_buy_price,
     units="USD/(kW*h)",
 )
@@ -103,12 +103,12 @@ h2i.post_process()
 n_hours = 336  # two weeks for clearer patterns
 hours = np.arange(n_hours)
 
-wind_out = h2i.prob.get_val("plant.wind.electricity_out")[:n_hours]
-solar_out = h2i.prob.get_val("plant.solar.electricity_out")[:n_hours]
-ng_out = h2i.prob.get_val("plant.natural_gas_plant.electricity_out", units="kW")[:n_hours]
-grid_out = h2i.prob.get_val("plant.grid_buy.electricity_out")[:n_hours]
-batt_discharge = h2i.prob.get_val("plant.battery.storage_electricity_discharge")[:n_hours]
-batt_soc = h2i.prob.get_val("plant.battery.SOC")[:n_hours]
+wind_out = h2i.prob.get_val("wind.electricity_out")[:n_hours]
+solar_out = h2i.prob.get_val("solar.electricity_out")[:n_hours]
+ng_out = h2i.prob.get_val("natural_gas_electricity_out", units="kW")[:n_hours]
+grid_out = h2i.prob.get_val("grid_buy.electricity_out")[:n_hours]
+batt_discharge = h2i.prob.get_val("battery.storage_electricity_discharge")[:n_hours]
+batt_soc = h2i.prob.get_val("battery.SOC")[:n_hours]
 demand = demand_profile[:n_hours]
 price = sell_price[:n_hours]
 

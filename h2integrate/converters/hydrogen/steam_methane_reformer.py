@@ -89,14 +89,9 @@ class SteamMethaneReformerPerformanceModel(PerformanceModelBaseClass):
             desc="SMR plant rated capacity in t/d",
         )
 
-        # Default the hydrogen set point input as the rated capacity
-        self.add_input(
-            f"{self.commodity}_set_point",
-            val=self.config.system_capacity_tonnes_per_day * (1000 / 24),  # convert t/d to kg/h
-            shape=n_timesteps,
-            units=self.commodity_rate_units,
-            desc="Hydrogen set point for SMR plant",
-        )
+        # set_point input is now provided by the base class for dispatchable
+        # models (PerformanceModelBaseClass.setup) and connected through the
+        # tech-level controller.
 
         # Add natural gas input, default to 0 --> set using feedstock component
         self.add_input(

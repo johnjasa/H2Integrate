@@ -18,12 +18,12 @@ h2i.post_process()
 n_hours = 168
 hours = np.arange(n_hours)
 
-wind_out = h2i.prob.get_val("plant.wind.electricity_out")[:n_hours]
-ng_out = h2i.prob.get_val("plant.natural_gas_plant.electricity_out", units="kW")[:n_hours]
-batt_discharge = h2i.prob.get_val("plant.battery.storage_electricity_discharge")[:n_hours]
-batt_soc = h2i.prob.get_val("plant.battery.SOC")[:n_hours]
-demand = h2i.prob.get_val("plant.electrical_load_demand.electricity_demand")[:n_hours]
-curtailed = h2i.prob.get_val("plant.electrical_load_demand.unused_electricity_out")[:n_hours]
+wind_out = h2i.prob.get_val("wind.electricity_out")[:n_hours]
+ng_out = h2i.prob.get_val("natural_gas_plant.electricity_out", units="kW")[:n_hours]
+batt_discharge = h2i.prob.get_val("battery.storage_electricity_discharge")[:n_hours]
+batt_soc = h2i.prob.get_val("battery.SOC")[:n_hours]
+demand = h2i.prob.get_val("electrical_load_demand.electricity_demand")[:n_hours]
+curtailed = h2i.prob.get_val("electrical_load_demand.unused_electricity_out")[:n_hours]
 
 fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
 

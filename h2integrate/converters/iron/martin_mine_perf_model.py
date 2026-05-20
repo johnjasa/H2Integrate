@@ -77,14 +77,9 @@ class MartinIronMinePerformanceComponent(PerformanceModelBaseClass):
             desc="Crude ore input",
         )
 
-        # Default the ore set point input as the rated capacity
-        self.add_input(
-            "iron_ore_set_point",
-            val=self.config.max_ore_production_rate_tonnes_per_hr,
-            shape=n_timesteps,
-            units="t/h",
-            desc="Iron ore set point for iron mine",
-        )
+        # set_point input is now provided by the base class for dispatchable
+        # models (PerformanceModelBaseClass.setup) and connected through the
+        # tech-level controller.
 
         self.add_output(
             "crude_ore_consumed",

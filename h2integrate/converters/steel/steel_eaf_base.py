@@ -77,14 +77,9 @@ class ElectricArcFurnacePlantBasePerformanceComponent(PerformanceModelBaseClass)
                 desc=f"{feedstock} consumed for steel production",
             )
 
-        # Default the steel set point input as the rated capacity
-        self.add_input(
-            "steel_set_point",
-            val=self.config.steel_production_rate_tonnes_per_hr,
-            shape=n_timesteps,
-            units=self.commodity_rate_units,
-            desc="Steel set point for steel plant",
-        )
+        # set_point input is now provided by the base class for dispatchable
+        # models (PerformanceModelBaseClass.setup) and connected through the
+        # tech-level controller.
 
         coeff_fpath = ROOT_DIR / "converters" / "iron" / "rosner" / "perf_coeffs.csv"
         # rosner dri performance model

@@ -85,14 +85,9 @@ class GridPerformanceModel(PerformanceModelBaseClass):
             desc="Electricity flowing into grid interconnection point (selling to grid)",
         )
 
-        # Electricity set point from downstream (for buying from grid)
-        self.add_input(
-            "electricity_set_point",
-            val=0.0,
-            shape=n_timesteps,
-            units=self.commodity_rate_units,
-            desc="Electricity set point from downstream technologies",
-        )
+        # set_point input is now provided by the base class for dispatchable
+        # models (PerformanceModelBaseClass.setup) and connected through the
+        # tech-level controller.
 
         # electricity_out is electricity flowing OUT OF the grid (buying from grid)
 
