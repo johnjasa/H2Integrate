@@ -156,7 +156,45 @@ def load_plant_yaml(finput):
 
 
 def load_driver_yaml(finput):
-    return _validate(finput, fschema_driver)
+    driver_config = _validate(finput, fschema_driver)
+    _coerce_design_var_bounds(driver_config)
+    return driver_config
+
+
+def _coerce_design_var_bounds(driver_config: dict) -> None:
+    """Coerce string-form numeric bounds in ``design_variables`` to floats in-place.
+
+    PyYAML parses values like ``1.e6`` (no digit after the dot) as strings rather
+    than floats, so the driver schema permits ``string`` for ``lower``/``upper``.
+    OpenMDAO's ``add_design_var`` requires numeric bounds, so we convert any
+    string-typed bounds to ``float`` once here, immediately after validation.
+
+    Args:
+        driver_config (dict): validated driver configuration dictionary, modified
+            in place.
+
+    Raises:
+        ValueError: if a string bound cannot be parsed as a float.
+    """
+    design_vars = driver_config.get("design_variables", {})
+    if not isinstance(design_vars, dict):
+        return
+    for technology, variables in design_vars.items():
+        if not isinstance(variables, dict):
+            continue
+        for key, spec in variables.items():
+            if not isinstance(spec, dict):
+                continue
+            for bound in ("lower", "upper"):
+                value = spec.get(bound)
+                if isinstance(value, str):
+                    try:
+                        spec[bound] = float(value)
+                    except ValueError as err:
+                        raise ValueError(
+                            f"design_variables.{technology}.{key}.{bound} "
+                            f"must be a number or numeric string, got {value!r}"
+                        ) from err
 
 
 def tech_yaml(instance: dict, foutput: str) -> None:

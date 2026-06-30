@@ -135,35 +135,61 @@ class run_PEM_clusters:
         # return h2_dict_ts, h2_df_tot
 
     def even_split_power(self):
+        """Distribute the input power signal evenly across active PEM clusters.
+
+        At each timestep, the number of clusters turned on is set so that each one
+        operates at or above its minimum stable power. The available power is then
+        split evenly across the active clusters; inactive clusters receive 0 kW.
+
+        The implementation is defensive against upstream resource-profile issues:
+        NaN, +/-inf, and negative input powers are coerced to 0 kW, and a
+        non-physical ``cluster_min_power`` (zero, negative, or non-finite) shuts
+        every cluster off rather than producing NaNs downstream.
+
+        Returns:
+            np.ndarray: Power dispatched to each cluster, shape
+            ``(num_clusters, n_timesteps)`` in kW.
+        """
         start = time.perf_counter()
-        # determine how much power to give each cluster
-        num_clusters_on = np.floor(self.input_power_kw / self.cluster_min_power)
-        num_clusters_on = np.where(
-            num_clusters_on > self.num_clusters, self.num_clusters, num_clusters_on
+
+        # Sanitize the input power signal. Upstream resource profiles can produce
+        # NaN, +/-inf, or small negative values; any of these would otherwise
+        # propagate through np.floor(...) and blow up the later int() cast.
+        input_power_kw = np.asarray(self.input_power_kw, dtype=float)
+        input_power_kw = np.nan_to_num(input_power_kw, nan=0.0, posinf=0.0, neginf=0.0)
+        np.maximum(input_power_kw, 0.0, out=input_power_kw)
+
+        n_timesteps = input_power_kw.size
+
+        # Guard against a degenerate cluster_min_power. If it isn't a positive
+        # finite number, no cluster can be turned on at any timestep.
+        if not np.isfinite(self.cluster_min_power) or self.cluster_min_power <= 0:
+            num_clusters_on = np.zeros(n_timesteps, dtype=int)
+        else:
+            num_clusters_on = np.floor(input_power_kw / self.cluster_min_power).astype(int)
+
+        # Clamp the cluster count to [0, num_clusters].
+        np.clip(num_clusters_on, 0, self.num_clusters, out=num_clusters_on)
+
+        # Safe division: where no clusters are on, per-cluster power is 0 kW.
+        power_per_cluster = np.divide(
+            input_power_kw,
+            num_clusters_on,
+            out=np.zeros_like(input_power_kw),
+            where=num_clusters_on > 0,
         )
-        power_per_cluster = [
-            self.input_power_kw[ti] / num_clusters_on[ti] if num_clusters_on[ti] > 0 else 0
-            for ti, pwr in enumerate(self.input_power_kw)
-        ]
 
-        power_per_to_active_clusters = np.array(power_per_cluster)
-        power_to_clusters = np.zeros((len(self.input_power_kw), self.num_clusters))
-        for i, cluster_power in enumerate(
-            power_per_to_active_clusters
-        ):  # np.arange(0,self.n_stacks,1):
-            clusters_off = self.num_clusters - int(num_clusters_on[i])
-            no_power = np.zeros(clusters_off)
-            with_power = cluster_power * np.ones(int(num_clusters_on[i]))
-            tot_power = np.concatenate((with_power, no_power))
-            power_to_clusters[i] = tot_power
+        # Build the (n_timesteps, num_clusters) dispatch matrix by broadcasting:
+        # the first num_clusters_on[t] columns get power_per_cluster[t], rest 0.
+        cluster_idx = np.arange(self.num_clusters)[np.newaxis, :]
+        active_mask = cluster_idx < num_clusters_on[:, np.newaxis]
+        power_to_clusters = np.where(active_mask, power_per_cluster[:, np.newaxis], 0.0)
 
-        # power_to_clusters = np.repeat([power_per_cluster],self.num_clusters,axis=0)
         end = time.perf_counter()
-
         if self.verbose:
             print(f"Took {round(end - start, 3)} sec to run even_split_power function")
-        # rows are power, columns are stacks [300 x n_stacks]
 
+        # Rows are clusters, columns are timesteps: shape (num_clusters, n_timesteps).
         return np.transpose(power_to_clusters)
 
     def max_h2_cntrl(self):

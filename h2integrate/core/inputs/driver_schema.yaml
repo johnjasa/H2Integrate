@@ -65,12 +65,12 @@ properties:
             type: boolean
             description: Activates as a design variable or constraint
           lower:
-            type: number
-            description: Lower bound for the variable
+            type: [number, string, 'null']
+            description: Lower bound for the variable.
             default: null
           upper:
-            type: number
-            description: Upper bound for the variable
+            type: [number, string, 'null']
+            description: Upper bound for the variable.
             default: null
           units:
             type: [string, 'null']

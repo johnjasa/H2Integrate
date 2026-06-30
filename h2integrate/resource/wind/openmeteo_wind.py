@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import datetime
 
+import numpy as np
 import pandas as pd
 import requests_cache
 import openmeteo_requests
@@ -10,6 +11,41 @@ from retry_requests import retry
 from h2integrate.core.validators import range_val
 from h2integrate.resource.resource_base import ResourceBaseAPIConfig
 from h2integrate.resource.wind.wind_resource_base import WindResourceBaseAPIModel
+
+
+# Workaround for a FLORIS + zero-wind-speed numerical bug.
+#
+# ``floris.core.flow_field.FlowField.initialize_velocity_field`` calls
+# ``np.power(grid.z_sorted, (wind_shear - 1), where=grid.z_sorted != 0.0)``
+# without an ``out=`` argument. NumPy then leaves uninitialized memory in the
+# result wherever the ``where`` mask is False, which in practice sometimes
+# contains NaNs. Those NaNs propagate through the wake calculation and produce
+# NaN in ``wind.electricity_out`` whenever any hour's inflow wind speed is
+# exactly 0.0 m/s -- something OpenMeteo legitimately reports for calm
+# desert grid cells.
+#
+# We clip the wind-speed columns to a tiny floor that is provably nonzero
+# (so the FLORIS ``where=ws != 0`` mask stays True) but well below any
+# utility-scale turbine cut-in (~3 m/s), so downstream power output is
+# identically zero up to floating-point.
+MIN_WIND_SPEED_MS: float = 0.01
+_WIND_SPEED_KEYS: tuple[str, ...] = ("wind_speed_10m", "wind_speed_100m")
+
+
+def _clip_wind_speeds(resource_data: dict) -> None:
+    """In-place floor of the wind-speed arrays in an OpenMeteo resource dict.
+
+    Only arrays that actually contain sub-floor values are rewritten, so
+    cached data for sites that never hit zero stays bit-for-bit identical.
+    """
+    for key in _WIND_SPEED_KEYS:
+        if key not in resource_data:
+            continue
+        arr = np.asarray(resource_data[key], dtype=float)
+        if arr.ndim == 0:
+            continue
+        if np.any(arr < MIN_WIND_SPEED_MS):
+            resource_data[key] = np.maximum(arr, MIN_WIND_SPEED_MS)
 
 
 @define(kw_only=True)
@@ -90,6 +126,12 @@ class OpenMeteoHistoricalWindResource(WindResourceBaseAPIModel):
         }
         # get the data dictionary
         data = self.get_data(self.config.latitude, self.config.longitude)
+
+        # Floor wind speeds to avoid a FLORIS uninitialized-memory bug that
+        # produces NaN power when any hour's inflow is exactly 0.0 m/s.
+        # See the module-level note on MIN_WIND_SPEED_MS for details.
+        if isinstance(data, dict):
+            _clip_wind_speeds(data)
 
         self.resource_data = data
 
