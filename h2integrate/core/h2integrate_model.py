@@ -55,8 +55,9 @@ class H2IntegrateModel:
         self.prob = om.Problem(reports=create_om_reports)
         self.model = self.prob.model
 
-        # initialize recorder_path attribute
+        # initialize recorder_path attributes
         self.recorder_path = None
+        self.recorder_paths = []
 
         # create site-level model
         # this is an OpenMDAO group that contains all the site information
@@ -1865,9 +1866,28 @@ class H2IntegrateModel:
             myopt.set_objective(self.prob)
             myopt.set_design_variables(self.prob)
             myopt.set_constraints(self.prob)
-        # Add a recorder if specified in the driver config
+        # Add one or more recorders if specified in the driver config
         if "recorder" in self.driver_config:
-            self.recorder_path = myopt.set_recorders(self.prob)
+            self.recorder_paths = myopt.set_recorders(self.prob)
+            # Preserve the single-path attribute for backward compatibility and
+            # downstream postprocessing; use the first enabled recorder.
+            self.recorder_path = self.recorder_paths[0] if self.recorder_paths else None
+
+    def _has_problem_recorder(self):
+        """Return True if any enabled recorder is attached at the problem level.
+
+        Problem-level recorders capture only the final design point of an
+        optimization case, which is written after the driver has finished.
+        """
+        recorder_config = self.driver_config.get("recorder")
+        if recorder_config is None:
+            return False
+        if isinstance(recorder_config, dict):
+            recorder_config = [recorder_config]
+        return any(
+            cfg.get("flag", False) and cfg.get("recorder_attachment", "driver").lower() == "problem"
+            for cfg in recorder_config
+        )
 
     def setup(self):
         """
@@ -1889,10 +1909,16 @@ class H2IntegrateModel:
         if self.state < State.RUN:
             # OpenMDAO will skip this step if it encounters an issue leading to silent failures
             # TODO: remove this step when OpenMDAO implements cursor closure
-            if self.recorder_path is not None:
-                self.recorder_path.unlink(missing_ok=True)
+            for recorder_path in self.recorder_paths:
+                recorder_path.unlink(missing_ok=True)
 
         self.prob.run_driver()
+
+        # Problem-level recorders only capture the final design point, which is
+        # written here after the driver has finished running.
+        if self._has_problem_recorder():
+            self.prob.record("final")
+
         self.state = State.RUN
 
     def post_process(self, print_results=True, summarize_sql=False, show_plots=False):

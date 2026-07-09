@@ -106,6 +106,38 @@ class PoseOptimization:
 
         return opt_prob
 
+    def _get_autoscaler(self, autoscaler_name):
+        """Return an OpenMDAO autoscaler instance for the requested name.
+
+        Autoscalers are set on the driver and therefore work with any optimization
+        driver (Scipy, pyOptSparse, GA, pymoo, etc.), not just gradient-based ones.
+
+        Args:
+            autoscaler_name (str): Name of the autoscaler requested in the driver
+                config. Supported values are ``"bounds"`` (normalize each design
+                variable to the interval [0, 1] using its bounds) and
+                ``"none"``/``"default"`` (use the driver's default, user-declared
+                ``ref``/``ref0``/``scaler``/``adder`` scaling).
+
+        Raises:
+            ValueError: The requested autoscaler is not supported.
+
+        Returns:
+            Autoscaler: An OpenMDAO autoscaler instance.
+        """
+        autoscalers = {
+            "bounds": om.BoundsAutoscaler,
+            "none": om.Autoscaler,
+            "default": om.Autoscaler,
+        }
+        key = str(autoscaler_name).lower()
+        if key not in autoscalers:
+            raise ValueError(
+                f"Autoscaler '{autoscaler_name}' is not supported. "
+                f"Supported options are {sorted(autoscalers)}."
+            )
+        return autoscalers[key]()
+
     def set_driver(self, opt_prob):
         """set which optimization driver to use and set options
 
@@ -263,8 +295,50 @@ class PoseOptimization:
                 ]
                 opt_prob = self._set_optimizer_properties(opt_prob, options_keys)
 
+            elif opt_options["solver"] == "pymoo":
+                # Genetic / evolutionary optimizers from the pymoo library,
+                # exposed through OpenMDAO's pymooDriver. The specific algorithm
+                # (e.g. "GA", "DE", "NSGA2") is selected via the "optimizer" key.
+                try:
+                    from openmdao.drivers.pymoo_driver import pymooDriver
+                except ImportError as err:
+                    raise ImportError(
+                        "You requested the 'pymoo' solver, but pymoo is not "
+                        "installed. Install it with `pip install pymoo` and rerun."
+                    ) from err
+
+                opt_prob.driver = pymooDriver()
+                opt_prob.driver.options["optimizer"] = opt_options.get("optimizer", "GA")
+                if "disp" in opt_options:
+                    opt_prob.driver.options["disp"] = opt_options["disp"]
+                if "procs_per_model" in opt_options:
+                    opt_prob.driver.options["procs_per_model"] = opt_options["procs_per_model"]
+
+                # Algorithm hyperparameters (population size, operators, ...) are
+                # passed straight through to the pymoo algorithm constructor.
+                alg_settings = dict(opt_options.get("alg_settings", {}))
+                if "pop_size" in opt_options:
+                    alg_settings.setdefault("pop_size", opt_options["pop_size"])
+                opt_prob.driver.alg_settings.update(alg_settings)
+
+                # Run-level settings passed to pymoo's minimize()/setup() (seed,
+                # verbose, termination, ...). "n_gen" is a convenience shortcut
+                # for the ("n_gen", N) termination tuple.
+                run_settings = dict(opt_options.get("run_settings", {}))
+                if "seed" in opt_options:
+                    run_settings.setdefault("seed", opt_options["seed"])
+                if "n_gen" in opt_options:
+                    run_settings.setdefault("termination", ("n_gen", int(opt_options["n_gen"])))
+                opt_prob.driver.run_settings.update(run_settings)
+
             else:
                 raise ValueError(f"Optimizer {opt_options['solver']} is not yet supported.")
+
+            # Optionally override how the driver scales design variables. Because
+            # the autoscaler lives on the base Driver, this works for every
+            # optimization driver, not just the Scipy/SLSQP-style ones.
+            if opt_options.get("autoscaler") is not None:
+                opt_prob.driver.autoscaler = self._get_autoscaler(opt_options["autoscaler"])
 
             if opt_options["debug_print"]:
                 opt_prob.driver.options["debug_print"] = [
@@ -412,101 +486,147 @@ class PoseOptimization:
                         opt_prob.model.add_constraint(f"{technology}.{key}", **value)
 
     def set_recorders(self, opt_prob):
-        """sets up a recorder for the openmdao problem as desired in the input yaml
+        """sets up one or more recorders for the openmdao problem as desired in the input yaml
+
+        The ``recorder`` entry in the driver config may be either a single mapping
+        (one recorder) or a list of mappings (multiple recorders). Each recorder may
+        write to its own sql file and record different variables via its own
+        ``includes``/``excludes`` statements. In addition to the ``driver`` and
+        ``model`` attachments, a recorder may be attached to the ``problem``, which
+        records only the final design point of an optimization case (the case is
+        written by ``H2IntegrateModel.run`` after the driver has finished).
 
         Args:
             opt_prob (openmdao problem instance): openmdao problem instance
                 for current optimization problem
 
         Returns:
-            recorder_path (Path or None): Path to the recorder file if recorder is enabled,
-                None otherwise
+            recorder_paths (list of Path): Paths to each enabled recorder file.
+                Empty list if no recorders are enabled.
         """
+        recorder_config = self.config.get("recorder")
+        if recorder_config is None:
+            return []
+
+        # Normalize to a list so one or many recorders are handled the same way
+        if isinstance(recorder_config, dict):
+            recorder_configs = [recorder_config]
+        else:
+            recorder_configs = recorder_config
+
         folder_output = self.config["general"]["folder_output"]
+
+        recorder_paths = []
+        for recorder_cfg in recorder_configs:
+            recorder_path = self._set_single_recorder(opt_prob, recorder_cfg, folder_output)
+            if recorder_path is not None:
+                recorder_paths.append(recorder_path)
+
+        return recorder_paths
+
+    def _set_single_recorder(self, opt_prob, recorder_cfg, folder_output):
+        """Set up a single recorder from its config mapping.
+
+        Args:
+            opt_prob (openmdao problem instance): openmdao problem instance for
+                current optimization problem
+            recorder_cfg (dict): configuration for a single recorder
+            folder_output (str or Path): output folder for recorder files
+
+        Raises:
+            ValueError: The requested recorder attachment is not supported.
+
+        Returns:
+            recorder_path (Path or None): Path to the recorder file if the recorder
+                is enabled, None otherwise.
+        """
+        if not recorder_cfg.get("flag", False):
+            return None
 
         # Set recorder on the OpenMDAO driver level using the `optimization_log`
         # filename supplied in the optimization yaml
         recorder_options = ["record_inputs", "record_outputs", "record_residuals"]
 
-        if self.config["recorder"].get("flag", False):
-            # Check that the output folder exists and create it if needed
-            if not Path(folder_output).exists():
-                Path.mkdir(folder_output, parents=True, exist_ok=True)
+        # Check that the output folder exists and create it if needed
+        if not Path(folder_output).exists():
+            Path(folder_output).mkdir(parents=True, exist_ok=True)
 
-            overwrite_recorder = self.config["recorder"].get("overwrite_recorder", False)
-            recorder_path = Path(folder_output) / self.config["recorder"]["file"]
+        overwrite_recorder = recorder_cfg.get("overwrite_recorder", False)
+        recorder_path = Path(folder_output) / recorder_cfg["file"]
 
-            if not overwrite_recorder:
-                # make a unique filename with the same base as self.config["recorder"]["file"]
-                # separate out the filename without the extension
-                file_base = self.config["recorder"]["file"].split(".sql")[0]
+        if not overwrite_recorder:
+            # make a unique filename with the same base as recorder_cfg["file"]
+            # separate out the filename without the extension
+            file_base = recorder_cfg["file"].split(".sql")[0]
 
-                recorder_fname = make_unique_case_name(
-                    Path(folder_output), f"{file_base}.sql", ".sql"
-                )
-                recorder_path = Path(folder_output) / recorder_fname
+            recorder_fname = make_unique_case_name(Path(folder_output), f"{file_base}.sql", ".sql")
+            recorder_path = Path(folder_output) / recorder_fname
 
-            recorder_attachment = (
-                self.config["recorder"].get("recorder_attachment", "driver").lower()
+        recorder_attachment = recorder_cfg.get("recorder_attachment", "driver").lower()
+        allowed_attachments = ["driver", "model", "problem"]
+        if recorder_attachment not in allowed_attachments:
+            msg = (
+                f"Invalid recorder attachment '{recorder_attachment}'. "
+                f"Currently supported options are {allowed_attachments}. "
+                "We recommend using 'driver' if running an optimization "
+                "or parameter sweep in parallel, and 'problem' to record only "
+                "the final design point of an optimization case."
             )
-            allowed_attachments = ["driver", "model"]
-            if recorder_attachment not in allowed_attachments:
-                msg = (
-                    f"Invalid recorder attachment '{recorder_attachment}'. "
-                    f"Currently supported options are {allowed_attachments}. "
-                    "We recommend using 'driver' if running an optimization "
-                    "or parameter sweep in parallel."
-                )
-                raise ValueError(msg)
+            raise ValueError(msg)
 
-            # Create recorder
-            recorder = om.SqliteRecorder(recorder_path)
+        # Create recorder
+        recorder = om.SqliteRecorder(recorder_path)
 
-            if recorder_attachment == "model":
-                # add the recorder to the model
-                recorder_options += ["options_excludes"]
+        if recorder_attachment == "model":
+            # add the recorder to the model
+            recorder_options += ["options_excludes"]
 
-                opt_prob.model.add_recorder(recorder)
+            opt_prob.model.add_recorder(recorder)
 
-                for recorder_opt in recorder_options:
-                    if recorder_opt in self.config["recorder"]:
-                        opt_prob.model.recording_options[recorder_opt] = self.config[
-                            "recorder"
-                        ].get(recorder_opt)
+            for recorder_opt in recorder_options:
+                if recorder_opt in recorder_cfg:
+                    opt_prob.model.recording_options[recorder_opt] = recorder_cfg.get(recorder_opt)
 
-                opt_prob.model.recording_options["includes"] = self.config["recorder"].get(
-                    "includes", ["*"]
-                )
-                opt_prob.model.recording_options["excludes"] = self.config["recorder"].get(
-                    "excludes", ["*resource_data"]
-                )
-                return recorder_path
+            opt_prob.model.recording_options["includes"] = recorder_cfg.get("includes", ["*"])
+            opt_prob.model.recording_options["excludes"] = recorder_cfg.get(
+                "excludes", ["*resource_data"]
+            )
 
-            if recorder_attachment == "driver":
-                recorder_options += [
-                    "record_constraints",
-                    "record_derivative",
-                    "record_desvars",
-                    "record_objectives",
-                ]
-                # add the recorder to the driver
-                opt_prob.driver.add_recorder(recorder)
+        elif recorder_attachment == "problem":
+            # add the recorder to the problem. Problem-level recorders only write a
+            # case when opt_prob.record() is called, which H2IntegrateModel does after
+            # run_driver, so only the final design point is stored.
+            opt_prob.add_recorder(recorder)
 
-                for recorder_opt in recorder_options:
-                    if recorder_opt in self.config["recorder"]:
-                        opt_prob.driver.recording_options[recorder_opt] = self.config[
-                            "recorder"
-                        ].get(recorder_opt)
+            for recorder_opt in recorder_options:
+                if recorder_opt in recorder_cfg:
+                    opt_prob.recording_options[recorder_opt] = recorder_cfg.get(recorder_opt)
 
-                opt_prob.driver.recording_options["includes"] = self.config["recorder"].get(
-                    "includes", ["*"]
-                )
-                opt_prob.driver.recording_options["excludes"] = self.config["recorder"].get(
-                    "excludes", ["*resource_data"]
-                )
-            return recorder_path
+            opt_prob.recording_options["includes"] = recorder_cfg.get("includes", ["*"])
+            opt_prob.recording_options["excludes"] = recorder_cfg.get(
+                "excludes", ["*resource_data"]
+            )
 
-        return None
+        else:  # recorder_attachment == "driver"
+            recorder_options += [
+                "record_constraints",
+                "record_derivative",
+                "record_desvars",
+                "record_objectives",
+            ]
+            # add the recorder to the driver
+            opt_prob.driver.add_recorder(recorder)
+
+            for recorder_opt in recorder_options:
+                if recorder_opt in recorder_cfg:
+                    opt_prob.driver.recording_options[recorder_opt] = recorder_cfg.get(recorder_opt)
+
+            opt_prob.driver.recording_options["includes"] = recorder_cfg.get("includes", ["*"])
+            opt_prob.driver.recording_options["excludes"] = recorder_cfg.get(
+                "excludes", ["*resource_data"]
+            )
+
+        return recorder_path
 
     def set_restart(self, opt_prob):
         """

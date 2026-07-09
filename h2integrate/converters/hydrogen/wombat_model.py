@@ -2,8 +2,6 @@ from pathlib import Path
 
 import numpy as np
 from attrs import field, define
-from wombat import Simulation
-from wombat.core.library import load_yaml
 
 from h2integrate.core.utilities import merge_shared_inputs
 from h2integrate.converters.hydrogen.pem_electrolyzer import (
@@ -70,6 +68,11 @@ class WOMBATElectrolyzerModel(ECOElectrolyzerPerformanceModel):
         )
 
     def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
+        # Import WOMBAT lazily so importing this module does not require WOMBAT (and
+        # avoids an SSL error seen in some environments during import).
+        from wombat import Simulation
+        from wombat.core.library import load_yaml
+
         super().compute(inputs, outputs, discrete_inputs, discrete_outputs)
 
         # Ensure library_path is a Path object

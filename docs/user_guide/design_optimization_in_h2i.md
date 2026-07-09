@@ -71,10 +71,37 @@ The `optimization` key is a dictionary that details key optimization settings, i
 - `solver`: The optimization algorithm to use. H2Integrate supports several solvers, including `COBYLA`, `SLSQP`, and the proprietary code `SNOPT`.
 - `rhobeg`: The initial size of the trust region for the optimization algorithm.
 - `debug_print`: A boolean flag that indicates whether to print debug information during the optimization process.
+- `autoscaler`: The strategy used to automatically scale design variables. See [Automatically scaling design variables](autoscaling-design-variables) below.
 
 This is not an exhaustive list of the driver specifications, but it covers the most common ones.
 Different drivers may have different options available, so be sure to check the documentation for the specific driver you are using.
 Both the [OpenMDAO docs on drivers](https://openmdao.org/newdocs/versions/latest/features/building_blocks/drivers/index.html) as well as the internal source code in H2I for the optimization driver can be helpful in understanding the options available to you.
+
+(autoscaling-design-variables)=
+## Automatically scaling design variables
+
+Optimizers work best when the design variables are of a similar order of magnitude.
+When design variables span very different scales (for example, an electrolyzer size in the hundreds of MW alongside a battery duration of a few hours), optimizers whose step-size or trust-region controls are scalar (such as COBYLA's `rhobeg`) can struggle.
+Instead of hand-tuning `ref`/`ref0`/`scaler`/`adder` on every design variable, you can ask H2Integrate to scale them automatically by setting the `autoscaler` option in the `optimization` section:
+
+```yaml
+driver:
+  optimization:
+    flag: True
+    solver: COBYLA
+    tol: 1e-8
+    autoscaler: bounds
+```
+
+The supported values are:
+- `bounds`: Normalizes each design variable to the interval [0, 1] using its `lower` and `upper` bounds, so that `lower` maps to 0 and `upper` maps to 1 in the optimizer's coordinate system. This requires every continuous design variable to have finite `lower` and `upper` bounds with `upper > lower`. Any user-declared `ref`/`ref0`/`scaler`/`adder` on the design variables is ignored, while constraints and the objective continue to use their user-declared scaling.
+- `none` or `default`: Uses the driver's default behavior, applying any user-declared `ref`/`ref0`/`scaler`/`adder` scaling. This is the same as omitting the `autoscaler` option entirely.
+
+Because the autoscaler is set on the driver itself, it works with every optimization driver (Scipy, pyOptSparse, GA, pymoo, and so on), not just gradient-based solvers.
+
+```{note}
+Autoscaling uses OpenMDAO's autoscaler feature. See the OpenMDAO documentation for more details on how the underlying scaling is applied.
+```
 
 ## Design variables
 

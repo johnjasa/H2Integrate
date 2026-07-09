@@ -18,6 +18,8 @@
 - Add `{commodity}_set_point` as an input to hydrogen fuel cell model [PR 709](https://github.com/NatLabRockies/H2Integrate/pull/709)
 - Rename `n_control_window` to `n_control_window_hours` for unit clarity [PR 712](https://github.com/NatLabRockies/H2Integrate/pull/712)
 - Update N2 diagram for demand openloop control from static and outdated to dynamic and interactive [PR 714](https://github.com/NatLabRockies/H2Integrate/pull/714)
+- Add support for multiple optimization recorders in the driver config, including a `problem` attachment that records only the final design point of an optimization case. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
+- Add an `autoscaler` driver config option to automatically scale design variables, including a `bounds` autoscaler that normalizes design variables to [0, 1] using their bounds, and works with all optimization drivers. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
 - `feedstocks.py` has moved from `h2integrate/core/` to `h2_integrate/feedstocks`
   [PR 719](https://github.com/NatLabRockies/H2Integrate/pull/719)
 - Creates the `EIANaturalGasFeedstockConfig` and `EIANaturalGasFeedstockCostModel` to load EIA
