@@ -1,3 +1,4 @@
+import numpy as np
 import PySAM.Pvwattsv8 as Pvwatts
 from attrs import field, define
 
@@ -301,6 +302,23 @@ class PYSAMSolarPlantPerformanceModel(SolarPerformanceBaseClass):
         outputs["electricity_out"] = self.system_model.Outputs.gen  # kW-dc
         pv_capacity_kWdc = self.system_model.value("system_capacity")
         dc_ac_ratio = self.system_model.value("dc_ac_ratio")
+
+        # Guard against a zero-capacity plant or a NaN generation profile (which
+        # PySAM can return when the system capacity is zero). In either case the
+        # plant produces nothing, so coerce the output to a zero series and skip
+        # the downstream calculations that would otherwise divide by zero.
+        electricity_out = np.asarray(outputs["electricity_out"], dtype=float)
+        if pv_capacity_kWdc == 0 or np.any(np.isnan(electricity_out)):
+            outputs["electricity_out"] = np.zeros_like(electricity_out)
+            outputs["system_capacity_AC"] = 0.0
+            outputs["rated_electricity_production"] = 0.0
+            outputs["total_electricity_produced"] = 0.0
+            outputs["capacity_factor"] = 0.0
+            outputs["annual_electricity_produced"] = 0.0
+            # Apply curtailment based on set_point
+            self.apply_curtailment(outputs)
+            return
+
         outputs["system_capacity_AC"] = pv_capacity_kWdc / dc_ac_ratio
         outputs["rated_electricity_production"] = outputs["system_capacity_AC"]
         outputs["total_electricity_produced"] = outputs["electricity_out"].sum() * (self.dt / 3600)

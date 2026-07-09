@@ -37,6 +37,7 @@ class PoseOptimization:
             "SNOPT",
             "CONMIN",
             "NSGA2",
+            "IPOPT",
         ]
 
     def _get_step_size(self):
@@ -209,7 +210,7 @@ class PoseOptimization:
                         but you have not installed pyOptSparse. \
                         Please do so and rerun."
                     ) from None
-                opt_prob.driver = pyOptSparseDriver(gradient_method=opt_options["gradient_method"])
+                opt_prob.driver = pyOptSparseDriver()
 
                 try:
                     opt_prob.driver.options["optimizer"] = opt_options["solver"]
@@ -271,6 +272,29 @@ class PoseOptimization:
                         opt_prob.driver.opt_settings["Verify level"] = opt_options["verify_level"]
                     else:
                         opt_prob.driver.opt_settings["Verify level"] = -1
+
+                elif opt_options["solver"] == "IPOPT":
+                    opt_prob.driver.opt_settings["tol"] = float(opt_options["tol"])
+                    opt_prob.driver.opt_settings["max_iter"] = int(opt_options["max_iter"])
+                    if "time_limit" in opt_options:
+                        opt_prob.driver.opt_settings["max_cpu_time"] = float(
+                            opt_options["time_limit"]
+                        )
+                    if "constr_viol_tol" in opt_options:
+                        opt_prob.driver.opt_settings["constr_viol_tol"] = float(
+                            opt_options["constr_viol_tol"]
+                        )
+                    if "linear_solver" in opt_options:
+                        opt_prob.driver.opt_settings["linear_solver"] = opt_options["linear_solver"]
+                    if "mu_strategy" in opt_options:
+                        opt_prob.driver.opt_settings["mu_strategy"] = opt_options["mu_strategy"]
+                    if "print_level" in opt_options:
+                        opt_prob.driver.opt_settings["print_level"] = int(
+                            opt_options["print_level"]
+                        )
+                    opt_prob.driver.opt_settings["output_file"] = str(
+                        Path(folder_output) / "IPOPT.out"
+                    )
                 if "hotstart_file" in opt_options:
                     opt_prob.driver.hotstart_file = opt_options["hotstart_file"]
 
