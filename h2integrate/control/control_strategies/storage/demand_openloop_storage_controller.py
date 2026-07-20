@@ -124,6 +124,12 @@ class DemandOpenLoopStorageController(StorageOpenLoopControlBase):
         max_capacity = inputs["storage_capacity"].item()
         max_charge_rate = inputs["max_charge_rate"].item()
 
+        # With no storage capacity there is nothing to charge or discharge, so all
+        # commands are zero. Return early to avoid dividing by ``max_capacity``.
+        if max_capacity <= 0:
+            outputs[f"{commodity}_command_value"] = np.zeros(self.n_timesteps)
+            return
+
         if self.config.charge_equals_discharge:
             max_discharge_rate = inputs["max_charge_rate"].item()
         else:

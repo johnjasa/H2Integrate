@@ -2,6 +2,7 @@ import warnings
 from pathlib import Path
 
 import numpy as np
+from openmdao.core.analysis_error import AnalysisError
 
 from h2integrate.finances.tools import _compute_price_units
 from h2integrate.core.dict_utils import dict_to_yaml_formatting
@@ -127,7 +128,25 @@ class ProFastLCO(ProFastBase):
             warnings.warn(msg, UserWarning)
             return
         # simulate ProFAST
-        sol, summary, price_breakdown = run_profast(pf)
+        try:
+            sol, summary, price_breakdown = run_profast(pf)
+        except AnalysisError as e:
+            # A degenerate design (e.g. ~zero generation -> ~zero commodity
+            # production) leaves ProFAST with a non-financeable cash flow
+            # (NaN/inf), surfaced as an AnalysisError. Rather than aborting the
+            # whole optimization on a single bad point, fall back to the same
+            # large-penalty LCO used for the zero-capacity-factor case above so
+            # a gradient-free optimizer just sees a very expensive point and
+            # steers away.
+            outputs[self.LCO_str] = 1e12
+            msg = (
+                f"ProFAST could not finance this design ({e}); setting "
+                f"{self.LCO_str} to the default penalty value of 1e12 "
+                f"({self.price_units}). If you receive this warning repeatedly, "
+                "there may be a problem with your setup."
+            )
+            warnings.warn(msg, UserWarning)
+            return
 
         # populate outputs
         # Output names based on naming convention for finance subgroups
