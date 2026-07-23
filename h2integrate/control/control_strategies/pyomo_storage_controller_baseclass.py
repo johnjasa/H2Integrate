@@ -1,3 +1,4 @@
+import logging
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -11,6 +12,29 @@ from h2integrate.core.validators import range_val
 
 if TYPE_CHECKING:  # to avoid circular imports
     pass
+
+
+class _PyomoW1001Filter(logging.Filter):
+    """Logging filter that drops Pyomo's W1001 out-of-domain warnings.
+
+    Pyomo emits warning W1001 when a solver returns a variable value that is
+    numerically zero but slightly outside the variable's domain. These messages are harmless
+    dispatch-solver noise, so they are filtered out. W1001 records are tagged by
+    Pyomo with ``extra={'id': 'W1001'}``, which this filter matches on.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return getattr(record, "id", None) != "W1001"
+
+
+def _suppress_pyomo_w1001_warning() -> None:
+    """Attach the W1001 filter to Pyomo's logger once."""
+    pyomo_logger = logging.getLogger("pyomo.core")
+    if not any(isinstance(f, _PyomoW1001Filter) for f in pyomo_logger.filters):
+        pyomo_logger.addFilter(_PyomoW1001Filter())
+
+
+_suppress_pyomo_w1001_warning()
 
 
 @define(kw_only=True)

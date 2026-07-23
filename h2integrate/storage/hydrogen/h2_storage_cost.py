@@ -634,7 +634,7 @@ class CompressedGasStorageCostModel(HydrogenStorageBaseCostModel):
         # Capex for compressor and storage scales with size
         # Capex for piping, plumbing, electrical, instrumentation, and buildings is constant
         # CEPCI data from HDSAM used to convert most costs to 2018, for those without a CEPCI index
-        # the BLS CPI calcualtor was used instead: https://data.bls.gov/cgi-bin/cpicalc.pl
+        # the BLS CPI calculator was used instead: https://data.bls.gov/cgi-bin/cpicalc.pl
         # "Truck Loading Compressor" and "Truck Scale" from HDSAM are not included
 
         # Storage Compressor

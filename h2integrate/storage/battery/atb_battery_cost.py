@@ -1,3 +1,5 @@
+import warnings
+
 from attrs import field, define
 from openmdao.utils import units
 
@@ -106,9 +108,10 @@ class ATBBatteryCostModel(CostModelBaseClass):
         if max_charge_rate_kW < 0:
             msg = (
                 f"max_charge_rate cannot be less than zero and has value of "
-                f"{max_charge_rate_kW} kW"
+                f"{max_charge_rate_kW} kW; coercing to 0 kW"
             )
-            raise UserWarning(msg)
+            warnings.warn(msg, UserWarning)
+            max_charge_rate_kW = 0.0
         # CapEx equation from Cell E29
         total_system_cost = (
             storage_duration_hrs * self.config.energy_capex
