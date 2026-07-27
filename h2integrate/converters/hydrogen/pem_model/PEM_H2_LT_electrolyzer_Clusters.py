@@ -94,6 +94,7 @@ class PEM_H2_Clusters:
         dt=3600,
         curve_coeff=None,
         water_usage_gal_pr_kg=10 / 3.79,
+        use_fatigue_deg=True,
     ):
         # self.input_dict = input_dict
         # print('RUNNING CLUSTERS PEM')
@@ -103,7 +104,10 @@ class PEM_H2_Clusters:
         self.include_deg_penalty = include_degradation_penalty
         self.use_onoff_deg = True
         self.use_uptime_deg = True
-        self.use_fatigue_deg = True
+        # Fatigue degradation (rainflow cycle-counting) is the most expensive
+        # part of the electrolyzer performance model; expose it so callers that
+        # do not need it (e.g. sizing optimizations) can turn it off.
+        self.use_fatigue_deg = use_fatigue_deg
 
         self.output_dict = {}
         self.dt = dt
@@ -492,14 +496,15 @@ class PEM_H2_Clusters:
         v_min = np.min(voltage_signal)
         if v_max == v_min:
             rf_sum = 0
-            lifetime_fatigue_deg = 0
             V_fatigue_ts = np.zeros(len(voltage_signal))
 
         else:
-            rf_cycles = rainflow.count_cycles(voltage_signal, nbins=10)
-            rf_sum = np.sum([pair[0] * pair[1] for pair in rf_cycles])
-            lifetime_fatigue_deg = rf_sum * self.rate_fatigue
-            self.output_dict["Approx Total Fatigue Degradation [V]"] = lifetime_fatigue_deg
+            # NOTE: a second full-signal rainflow pass used to be run here purely
+            # to populate the "Approx Total Fatigue Degradation [V]" diagnostic.
+            # It roughly doubled the rainflow cost (a full ~8760-point count on
+            # top of the weekly counts below) without affecting the returned
+            # fatigue signal, so it has been removed; the diagnostic is now taken
+            # from the accumulated weekly total (``rf_track``) instead.
             rf_track = 0
             V_fatigue_ts = np.zeros(len(voltage_signal))
             for i in range(len(t_calc) - 1):
@@ -523,6 +528,7 @@ class PEM_H2_Clusters:
                 rf_track += rf_sum
                 V_fatigue_ts[t_calc[i] : t_calc[i + 1]] = rf_track * self.rate_fatigue
                 # already cumulative!
+            self.output_dict["Approx Total Fatigue Degradation [V]"] = rf_track * self.rate_fatigue
             self.output_dict["Sim End RF Track"] = rf_track  # TODO: remove
             self.output_dict["Total Actual Fatigue Degradation [V]"] = V_fatigue_ts[
                 -1

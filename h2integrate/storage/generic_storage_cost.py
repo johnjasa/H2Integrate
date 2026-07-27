@@ -1,3 +1,5 @@
+import warnings
+
 from attrs import field, define
 from openmdao.utils import units
 
@@ -102,23 +104,29 @@ class GenericStorageCostModel(CostModelBaseClass):
     def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
         storage_duration_hrs = 0.0
 
-        if inputs["max_charge_rate"] > 0:
+        max_charge_rate = inputs["max_charge_rate"]
+        if max_charge_rate > 0:
             storage_duration_hrs = units.convert_units(
-                inputs["storage_capacity"] / inputs["max_charge_rate"],
+                inputs["storage_capacity"] / max_charge_rate,
                 f"({self.config.commodity_amount_units})/({self.config.commodity_rate_units})",
                 "h",
             )
-        if inputs["max_charge_rate"] < 0:
+        if max_charge_rate < 0:
+            # A gradient-free optimizer (e.g. COBYLA) can probe design points
+            # with a slightly-negative charge rate. Coerce to zero ("no
+            # storage") and warn instead of raising, so a single infeasible
+            # probe does not abort the whole optimization.
             msg = (
                 f"max_charge_rate cannot be less than zero and has value of "
-                f"{inputs['max_charge_rate']}"
+                f"{max_charge_rate}; coercing to 0"
             )
-            raise UserWarning(msg)
+            warnings.warn(msg, UserWarning)
+            max_charge_rate = 0.0
         # Calculate total system cost based on capacity and charge components
         total_system_cost = (storage_duration_hrs * inputs["capacity_capex"]) + inputs[
             "charge_capex"
         ]
-        capex = total_system_cost * inputs["max_charge_rate"]
+        capex = total_system_cost * max_charge_rate
         # Calculate operating expenses as a fraction of capital expenses
         opex = inputs["opex_fraction"] * capex
         outputs["CapEx"] = capex

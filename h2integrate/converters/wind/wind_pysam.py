@@ -1,6 +1,7 @@
 import operator
 import functools
 from typing import Any
+from pathlib import Path
 
 import numpy as np
 import PySAM.Windpower as Windpower
@@ -9,6 +10,7 @@ from attrs import field, define
 
 from h2integrate.core.utilities import BaseConfig, merge_shared_inputs
 from h2integrate.core.validators import gt_zero, contains, gte_zero
+from h2integrate.core.model_baseclasses import CacheBaseClass
 from h2integrate.converters.wind.wind_plant_baseclass import WindPerformanceBaseClass
 from h2integrate.converters.wind.layout.simple_grid_layout import (
     BasicGridLayoutConfig,
@@ -71,6 +73,11 @@ class PYSAMWindPlantPerformanceModelConfig(BaseConfig):
             )
         run_recalculate_power_curve (bool, optional): whether to recalculate the wind turbine
             power curve. defaults to True.
+        enable_caching (bool, optional): if True, checks if the outputs have been saved to a
+            cached file and, if not, saves outputs to a file keyed on the model config and
+            inputs (num_turbines, turbine specs, and wind resource data). Defaults to False.
+        cache_dir (str | Path, optional): folder to use for reading or writing cached results
+            files. Only used if enable_caching is True. Defaults to "cache".
     """
 
     num_turbines: int = field(converter=int, validator=gte_zero)
@@ -101,6 +108,8 @@ class PYSAMWindPlantPerformanceModelConfig(BaseConfig):
     run_recalculate_power_curve: bool = field(default=True)
     layout: dict = field(default={})
     powercurve_calc_config: dict = field(default={})
+    enable_caching: bool = field(default=False)
+    cache_dir: str | Path = field(default="cache")
 
     def __attrs_post_init__(self):
         if self.create_model_from == "new" and not bool(self.pysam_options):
@@ -109,6 +118,12 @@ class PYSAMWindPlantPerformanceModelConfig(BaseConfig):
                 "of Windpower design variables for the 'pysam_options' key."
             )
             raise ValueError(msg)
+
+        # Normalize the cache directory and create it if caching is enabled.
+        if isinstance(self.cache_dir, str):
+            self.cache_dir = Path(self.cache_dir)
+        if self.enable_caching and not self.cache_dir.exists():
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         self.check_pysam_options()
 
@@ -176,7 +191,7 @@ class PYSAMWindPlantPerformanceModelConfig(BaseConfig):
         return design_dict
 
 
-class PYSAMWindPlantPerformanceModel(WindPerformanceBaseClass):
+class PYSAMWindPlantPerformanceModel(WindPerformanceBaseClass, CacheBaseClass):
     """
     An OpenMDAO component that wraps a WindPlant model.
     It takes wind parameters as input and outputs power generation data.
@@ -448,6 +463,15 @@ class PYSAMWindPlantPerformanceModel(WindPerformanceBaseClass):
         return success
 
     def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
+        # If this exact (config + inputs + resource) combination has been run
+        # before and caching is enabled, load the cached outputs and skip the
+        # (expensive) PySAM execution entirely.
+        config_dict = self.config.as_dict()
+        if self.load_outputs(
+            inputs, outputs, discrete_inputs, discrete_outputs={}, config_dict=config_dict
+        ):
+            return
+
         rotor_diameter = inputs["rotor_diameter"][0]
         turbine_rating_kw = inputs["wind_turbine_rating"][0]
         n_turbs = int(np.round(inputs["num_turbines"][0]))
@@ -514,6 +538,11 @@ class PYSAMWindPlantPerformanceModel(WindPerformanceBaseClass):
 
         # Apply curtailment based on set_point
         self.apply_curtailment(outputs)
+
+        # Save the computed outputs to the cache for future reuse.
+        self.cache_outputs(
+            inputs, outputs, discrete_inputs, discrete_outputs={}, config_dict=config_dict
+        )
 
     def post_process(self, show_plots=False):
         def plot_turbine_points(

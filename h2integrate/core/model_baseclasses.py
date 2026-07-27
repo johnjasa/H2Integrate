@@ -514,14 +514,46 @@ class CacheBaseClass(om.ExplicitComponent):
         else:
             config_dict = copy.deepcopy(config)
 
-        hash_dict_str = str(config_dict)
-        hash_dict_str += str(dict(inputs.items()))
-        hash_dict_str += str(dict(discrete_inputs.items()))
-
-        # Create a unique hash for the current configuration to use as a cache key
-        config_hash = hashlib.md5(hash_dict_str.encode("utf-8")).hexdigest()
+        # Build the cache key by hashing the config, inputs, and discrete inputs
+        # incrementally. numpy arrays are hashed from their raw bytes rather than
+        # their string representation: stringifying large arrays (e.g. 8760-hour
+        # resource/command timeseries) via numpy's array2string is extremely slow
+        # and can dominate runtime, whereas ``tobytes`` is effectively instant.
+        hasher = hashlib.md5()
+        self._update_hash(hasher, config_dict)
+        self._update_hash(hasher, dict(inputs.items()))
+        self._update_hash(hasher, dict(discrete_inputs.items()))
+        config_hash = hasher.hexdigest()
 
         return self.config.cache_dir / f"{config_hash}.pkl"
+
+    @staticmethod
+    def _update_hash(hasher, value):
+        """Update an md5 hasher with a value, hashing numpy arrays by raw bytes.
+
+        Recurses through dicts, lists, and tuples so nested containers of arrays
+        (such as the resource-data discrete inputs) are hashed efficiently and
+        deterministically.
+
+        Args:
+            hasher (hashlib._Hash): md5 (or similar) hasher to update in place.
+            value: the value to fold into the hash.
+        """
+        if isinstance(value, np.ndarray):
+            hasher.update(b"ndarray")
+            hasher.update(str(value.dtype).encode("utf-8"))
+            hasher.update(str(value.shape).encode("utf-8"))
+            hasher.update(np.ascontiguousarray(value).tobytes())
+        elif isinstance(value, dict):
+            for key in sorted(value, key=str):
+                hasher.update(str(key).encode("utf-8"))
+                CacheBaseClass._update_hash(hasher, value[key])
+        elif isinstance(value, list | tuple):
+            hasher.update(b"seq")
+            for item in value:
+                CacheBaseClass._update_hash(hasher, item)
+        else:
+            hasher.update(str(value).encode("utf-8"))
 
     def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
         """

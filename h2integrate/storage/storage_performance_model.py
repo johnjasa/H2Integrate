@@ -2,7 +2,7 @@ import numpy as np
 from attrs import field, define
 
 from h2integrate.core.utilities import merge_shared_inputs
-from h2integrate.core.validators import gt_zero, range_val, range_val_or_none
+from h2integrate.core.validators import gte_zero, range_val, range_val_or_none
 from h2integrate.storage.storage_baseclass import (
     StoragePerformanceBase,
     StoragePerformanceBaseConfig,
@@ -55,8 +55,8 @@ class StoragePerformanceModelConfig(StoragePerformanceBaseConfig):
     commodity: str = field()
     commodity_rate_units: str = field()
 
-    max_capacity: float = field(validator=gt_zero)
-    max_charge_rate: float = field(validator=gt_zero)
+    max_capacity: float = field(validator=gte_zero)
+    max_charge_rate: float = field(validator=gte_zero)
 
     init_soc_fraction: float = field(validator=range_val(0, 1))
 

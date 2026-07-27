@@ -37,6 +37,10 @@ class ECOElectrolyzerPerformanceModelConfig(ResizeablePerformanceModelBaseConfig
         include_degradation_penalty (bool): Flag to include degradation of the electrolyzer due to
             operational hours, ramping, and on/off power cycles.
         turndown_ratio (float): The ratio at which the electrolyzer will shut down.
+        use_fatigue_deg (bool): Flag to include fatigue (rainflow cycle-counting) degradation.
+            Defaults to True. The fatigue calculation is the most expensive part of the
+            electrolyzer performance model, so it can be disabled (e.g. for sizing
+            optimizations where it has negligible effect on the result).
         electrolyzer_capex (int): $/kW overnight installed capital costs for a 1 MW system in
             2022 USD/kW (DOE hydrogen program record 24005 Clean Hydrogen Production Cost Scenarios
             with PEM Electrolyzer Technology 05/20/24) #TODO: convert to refs
@@ -50,6 +54,7 @@ class ECOElectrolyzerPerformanceModelConfig(ResizeablePerformanceModelBaseConfig
     uptime_hours_until_eol: int = field(validator=gt_zero)
     include_degradation_penalty: bool = field()
     turndown_ratio: float = field(validator=gt_zero)
+    use_fatigue_deg: bool = field(default=True)
     electrolyzer_capex: int = field()
 
 
@@ -153,6 +158,7 @@ class ECOElectrolyzerPerformanceModel(ElectrolyzerPerformanceBaseClass):
             "uptime_hours_until_eol": self.config.uptime_hours_until_eol,
             "include_degradation_penalty": self.config.include_degradation_penalty,
             "turndown_ratio": self.config.turndown_ratio,
+            "use_fatigue_deg": self.config.use_fatigue_deg,
         }
 
         energy_to_electrolyzer_kw = inputs["electricity_in"]

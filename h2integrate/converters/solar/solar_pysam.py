@@ -1,4 +1,5 @@
 import warnings
+from pathlib import Path
 
 import numpy as np
 import PySAM.Pvwattsv8 as Pvwatts
@@ -7,6 +8,7 @@ from attrs import field, define
 from h2integrate.core.utilities import BaseConfig, merge_shared_inputs
 from h2integrate.core.validators import contains, range_val_or_none
 from h2integrate.converters.tools import check_pysam_input_params
+from h2integrate.core.model_baseclasses import CacheBaseClass
 from h2integrate.converters.solar.solar_baseclass import SolarPerformanceBaseClass
 
 
@@ -40,6 +42,11 @@ class PYSAMSolarPlantPerformanceModelDesignConfig(BaseConfig):
             (please refer to Pvwattsv8 documentation
             `here <https://nrel-pysam.readthedocs.io/en/main/modules/Pvwattsv8.html>`__
             )
+        enable_caching (bool, optional): if True, checks if the outputs have been saved to a
+            cached file and, if not, saves outputs to a file keyed on the model config and
+            inputs (pv_capacity_kWdc and solar resource data). Defaults to False.
+        cache_dir (str | Path, optional): folder to use for reading or writing cached results
+            files. Only used if enable_caching is True. Defaults to "cache".
 
     """
 
@@ -81,6 +88,9 @@ class PYSAMSolarPlantPerformanceModelDesignConfig(BaseConfig):
 
     pysam_options: dict = field(default={})
 
+    enable_caching: bool = field(default=False)
+    cache_dir: str | Path = field(default="cache")
+
     def __attrs_post_init__(self):
         if self.create_model_from == "new" and not bool(self.pysam_options):
             msg = (
@@ -88,6 +98,12 @@ class PYSAMSolarPlantPerformanceModelDesignConfig(BaseConfig):
                 "of Pvwattsv8 design variables for the 'pysam_options' key."
             )
             raise ValueError(msg)
+
+        # Normalize the cache directory and create it if caching is enabled.
+        if isinstance(self.cache_dir, str):
+            self.cache_dir = Path(self.cache_dir)
+        if self.enable_caching and not self.cache_dir.exists():
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         self.check_pysam_options()
 
@@ -139,7 +155,7 @@ class PYSAMSolarPlantPerformanceModelDesignConfig(BaseConfig):
         return {"SystemDesign": design_dict}
 
 
-class PYSAMSolarPlantPerformanceModel(SolarPerformanceBaseClass):
+class PYSAMSolarPlantPerformanceModel(SolarPerformanceBaseClass, CacheBaseClass):
     """
     An OpenMDAO component that wraps a SolarPlant model.
     It takes solar parameters as input and outputs power generation data.
@@ -158,6 +174,9 @@ class PYSAMSolarPlantPerformanceModel(SolarPerformanceBaseClass):
             strict=True,
             additional_cls_name=self.__class__.__name__,
         )
+        # ``CacheBaseClass`` reads caching settings from ``self.config``; alias it
+        # to the solar design config so the shared caching helpers work.
+        self.config = self.design_config
         self.add_input(
             "system_capacity_DC",
             val=self.design_config.pv_capacity_kWdc,
@@ -331,6 +350,15 @@ class PYSAMSolarPlantPerformanceModel(SolarPerformanceBaseClass):
         return reformatted_data
 
     def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
+        # If this exact (config + inputs + resource) combination has been run
+        # before and caching is enabled, load the cached outputs and skip the
+        # (expensive) PySAM execution entirely.
+        config_dict = self.design_config.as_dict()
+        if self.load_outputs(
+            inputs, outputs, discrete_inputs, discrete_outputs={}, config_dict=config_dict
+        ):
+            return
+
         # calculate the tilt angle based on site latitude (use 0 if site latitude is not input)
         tilt = self.calc_tilt_angle(discrete_inputs["solar_resource_data"].get("site_lat", 0))
         # over-write the tilt angle if it was specified in the design dict
@@ -388,3 +416,8 @@ class PYSAMSolarPlantPerformanceModel(SolarPerformanceBaseClass):
 
         # Apply curtailment based on set_point
         self.apply_curtailment(outputs)
+
+        # Save the computed outputs to the cache for future reuse.
+        self.cache_outputs(
+            inputs, outputs, discrete_inputs, discrete_outputs={}, config_dict=config_dict
+        )

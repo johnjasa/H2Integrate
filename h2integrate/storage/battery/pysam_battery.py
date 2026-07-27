@@ -4,7 +4,7 @@ import PySAM.BatteryStateful as BatteryStateful
 from attrs import field, define
 
 from h2integrate.core.utilities import merge_shared_inputs
-from h2integrate.core.validators import gt_zero, contains, range_val
+from h2integrate.core.validators import gt_zero, contains, gte_zero, range_val
 from h2integrate.storage.storage_baseclass import (
     StoragePerformanceBase,
     StoragePerformanceBaseConfig,
@@ -52,7 +52,7 @@ class PySAMBatteryPerformanceModelConfig(StoragePerformanceBaseConfig):
     """
 
     max_capacity: float = field(validator=gt_zero)
-    max_charge_rate: float = field(validator=gt_zero)
+    max_charge_rate: float = field(validator=gte_zero)
 
     chemistry: str = field(
         validator=contains(["LFPGraphite", "LMOLTO", "LeadAcid", "NMCGraphite"]),

@@ -3,7 +3,7 @@ from attrs import field, define
 from pyomo.network import Port
 
 from h2integrate.core.utilities import merge_shared_inputs
-from h2integrate.core.validators import gt_zero, range_val
+from h2integrate.core.validators import gte_zero, range_val
 from h2integrate.control.control_rules.pyomo_rule_baseclass import (
     PyomoRuleBaseClass,
     PyomoRuleBaseConfig,
@@ -12,7 +12,7 @@ from h2integrate.control.control_rules.pyomo_rule_baseclass import (
 
 @define(kw_only=True)
 class PyomoStorageRuleBaseConfig(PyomoRuleBaseConfig):
-    max_capacity: float = field(validator=gt_zero)
+    max_capacity: float = field(validator=gte_zero)
 
     min_soc_fraction: float = field(default=0.1, validator=range_val(0, 1))
     max_soc_fraction: float = field(default=0.9, validator=range_val(0, 1))
