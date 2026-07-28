@@ -412,7 +412,13 @@ class PYSAMSolarPlantPerformanceModel(SolarPerformanceBaseClass, CacheBaseClass)
         )
 
         outputs["capacity_factor"] = outputs["total_electricity_produced"] / max_production
-        outputs["annual_electricity_produced"] = self.system_model.value("ac_annual")
+        # Prefer PySAM's reported annual AC energy when available; fall back to
+        # summing the generation profile if the model does not expose ac_annual.
+        try:
+            annual_electricity_produced = self.system_model.value("ac_annual")
+        except Exception:  # noqa: BLE001
+            annual_electricity_produced = outputs["electricity_out"].sum() * (self.dt / 3600)
+        outputs["annual_electricity_produced"] = annual_electricity_produced
 
         # Apply curtailment based on set_point
         self.apply_curtailment(outputs)
