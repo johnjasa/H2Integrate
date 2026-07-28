@@ -71,14 +71,13 @@ def test_geothermal_cost_scaling(geothermal_cost_params, plant_config, subtests)
 
 @pytest.mark.unit
 def test_geothermal_performance_and_cost(
-    geothermal_cost_params, plant_config, weather_file, subtests
+    geothermal_cost_params, plant_config, solar_resource_data, subtests
 ):
     performance_params = {
         "nameplate_kW": 30000.0,
         "resource_temp_C": 200.0,
         "resource_depth_m": 2000.0,
         "create_model_from": "default",
-        "weather_file": weather_file,
     }
     tech_config_dict = {
         "model_inputs": {
@@ -101,6 +100,7 @@ def test_geothermal_performance_and_cost(
     prob.model.add_subsystem("geo_perf", perf_comp, promotes=["*"])
     prob.model.add_subsystem("geo_cost", cost_comp, promotes=["*"])
     prob.setup()
+    prob.set_val("solar_resource_data", solar_resource_data)
     prob.run_model()
 
     capacity = prob.get_val("geo_cost.system_capacity_AC", units="kW")[0]

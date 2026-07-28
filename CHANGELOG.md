@@ -73,7 +73,7 @@
 - Updated `commodity_sell_price` input to `ProFastNPV` to be per year of the plant life. Also updated `BasicProFASTParameterConfig.as_dict()` so explicitly input escalation values are not overwritten to the general inflation rate [PR 799](https://github.com/NatLabRockies/H2Integrate/pull/799)
 - Added `calc_azimuth_angle()` to `PYSAMSolarPlantPerformanceModel` to provide default azimuth angle based on whether the site is in the northern or southern hemisphere [PR 806](https://github.com/NatLabRockies/H2Integrate/pull/806)
 - Corrected water rate units in pipe feedstock from galUS to galUS/h [PR 813](https://github.com/NatLabRockies/H2Integrate/pull/813)
-- Add geothermal power performance and cost models. The `PYSAMGeothermalPlantPerformanceModel` wraps the PySAM Geothermal (GETEM) module to model a baseload geothermal plant, and the `GeothermalPlantCostModel` scales capital and operating costs by plant capacity. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
+- Add geothermal power performance and cost models. The `PYSAMGeothermalPlantPerformanceModel` wraps the PySAM Geothermal (GETEM) module to model a baseload geothermal plant using ambient conditions from a connected weather resource model, and the `GeothermalPlantCostModel` scales capital and operating costs by plant capacity. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
 
 ## 0.8 [April 15, 2026]
 

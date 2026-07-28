@@ -9,7 +9,7 @@ from h2integrate.converters.geothermal.geothermal_pysam import (
 
 
 @pytest.fixture
-def geothermal_performance_params(weather_file):
+def geothermal_performance_params():
     return {
         "nameplate_kW": 30000.0,
         "resource_temp_C": 200.0,
@@ -19,7 +19,6 @@ def geothermal_performance_params(weather_file):
         "analysis_type": 0,
         "create_model_from": "default",
         "config_name": "GeothermalPowerSingleOwner",
-        "weather_file": weather_file,
     }
 
 
@@ -30,12 +29,6 @@ class TestGeothermalConfig:
         assert config.nameplate_kW == 30000.0
         assert config.resource_temp_C == 200.0
         assert config.resource_type == 0
-
-    def test_missing_weather_file(self, geothermal_performance_params):
-        params = dict(geothermal_performance_params)
-        params["weather_file"] = "does_not_exist.csv"
-        with pytest.raises(FileNotFoundError):
-            PYSAMGeothermalPlantPerformanceModelConfig.from_dict(params)
 
     def test_resource_temp_out_of_range(self, geothermal_performance_params):
         params = dict(geothermal_performance_params)
@@ -63,7 +56,8 @@ class TestGeothermalConfig:
 
 
 @pytest.mark.unit
-def test_geothermal_outputs(geothermal_performance_params, plant_config, subtests):
+def test_missing_resource_data_raises(geothermal_performance_params, plant_config):
+    """The model requires ambient temperature data from a connected resource model."""
     tech_config_dict = {
         "model_inputs": {
             "performance_parameters": geothermal_performance_params,
@@ -78,6 +72,31 @@ def test_geothermal_outputs(geothermal_performance_params, plant_config, subtest
     )
     prob.model.add_subsystem("comp", comp, promotes=["*"])
     prob.setup()
+
+    # solar_resource_data defaults to an empty dict; running should raise.
+    with pytest.raises(ValueError):
+        prob.run_model()
+
+
+@pytest.mark.unit
+def test_geothermal_outputs(
+    geothermal_performance_params, solar_resource_data, plant_config, subtests
+):
+    tech_config_dict = {
+        "model_inputs": {
+            "performance_parameters": geothermal_performance_params,
+        }
+    }
+
+    prob = om.Problem()
+    comp = PYSAMGeothermalPlantPerformanceModel(
+        plant_config=plant_config,
+        tech_config=tech_config_dict,
+        driver_config={},
+    )
+    prob.model.add_subsystem("comp", comp, promotes=["*"])
+    prob.setup()
+    prob.set_val("solar_resource_data", solar_resource_data)
     prob.run_model()
 
     n_timesteps = int(plant_config["plant"]["simulation"]["n_timesteps"])

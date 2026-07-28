@@ -5,6 +5,8 @@ This model uses the [Geothermal module](https://nrel-pysam.readthedocs.io/en/mai
 
 Geothermal plants are modeled as fixed (baseload) generators of electricity. Their output is driven by the subsurface resource and is not curtailed or dispatched within H2Integrate's system-level control framework.
 
+The surface ambient conditions used to size the power cycle (dry-bulb temperature, humidity, and pressure) are taken from a connected weather resource model rather than a weather file, following the same resource-handling pattern used by the solar and wind PySAM models. Connect a weather/solar resource to the geothermal technology through `resource_to_tech_connections` in the plant config so that its `solar_resource_data` output is provided to the model.
+
 ## Performance model
 
 To use the performance model, specify `"PYSAMGeothermalPlantPerformanceModel"` as the performance model. An example of how this may look in the `tech_config` file is shown below, and details on the performance parameter inputs can be found [here](#performance-parameters).
@@ -22,7 +24,6 @@ technologies:
                 resource_type: 0 # 0 = hydrothermal, 1 = EGS
                 conversion_type: 0 # 0 = binary, 1 = flash
                 analysis_type: 0 # 0 = specify nameplate, 1 = specify number of wells
-                weather_file: "path/to/weather_file.csv"
                 create_model_from: "default" # options are "default" and "new"
                 config_name: "GeothermalPowerSingleOwner"
                 pysam_options: # optional, additional PySAM inputs
@@ -39,14 +40,17 @@ technologies:
 - `nameplate_kW` (required): desired plant nameplate (net) output in kW.
 - `resource_temp_C` (required): geothermal resource temperature in degrees Celsius. Must be in the range [0, 373].
 - `resource_depth_m` (required): geothermal resource depth in meters.
-- `weather_file` (required): path to the ambient weather file (TMY / PSM3 format) used to model the surface power cycle. The geothermal resource itself is defined by the subsurface parameters above; the weather file only provides ambient conditions (for example, wet-bulb temperature) for the power block.
 - `resource_type` (optional): type of geothermal resource. `0` for hydrothermal (default) or `1` for an enhanced geothermal system (EGS).
 - `conversion_type` (optional): power conversion cycle type. `0` for a binary cycle (default) or `1` for a flash cycle.
 - `analysis_type` (optional): sizing basis. `0` to specify the plant nameplate output (default) or `1` to specify the number of production wells.
 - `num_wells` (optional): number of production wells. Only used when `analysis_type` is `1`.
 - `create_model_from` (optional): either `"default"` or `"new"`, defaults to `"default"`. If `"default"`, the model is initialized using `Geothermal.default(config_name)` and then updated with the parameters above. If `"new"`, the model is initialized using `Geothermal.new()` and must be populated with parameters specified in `pysam_options`.
 - `config_name` (optional): only used if `create_model_from` is `"default"`. Defaults to `"GeothermalPowerSingleOwner"`.
-- `pysam_options` (optional): dictionary of additional PySAM Geothermal inputs with top-level keys corresponding to the Geothermal variable groups (`GeoHourly`, `AdjustmentFactors`). Parameters managed directly by this model (for example `resource_temp`, `nameplate`, `file_name`) must not be duplicated here.
+- `pysam_options` (optional): dictionary of additional PySAM Geothermal inputs with top-level keys corresponding to the Geothermal variable groups (`GeoHourly`, `AdjustmentFactors`). Parameters managed directly by this model (for example `resource_temp`, `nameplate`, `design_temp`) must not be duplicated here.
+
+### Resource connection
+
+The model reads the ambient dry-bulb temperature, relative humidity, and pressure from the connected resource model's `solar_resource_data` output. The annual-mean dry-bulb temperature sets the power-block design temperature, the wet-bulb temperature is estimated from the mean relative humidity, and the mean pressure sets the ambient pressure. GETEM is run in its design-calculation mode using these conditions, and the resulting net capacity is dispatched as a constant baseload profile.
 
 ### Outputs
 - `electricity_out`: hourly electricity generation profile in kW.

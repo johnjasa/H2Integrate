@@ -24,6 +24,18 @@ class GeothermalPerformanceBaseClass(PerformanceModelBaseClass):
     def setup(self):
         super().setup()
 
+        # Ambient weather resource used to set the power-cycle design conditions.
+        # The geothermal (subsurface) resource is defined by the performance
+        # parameters, while this dictionary supplies the surface ambient conditions
+        # (dry-bulb temperature, humidity, pressure) provided by a connected
+        # resource model in the same way the solar and wind PySAM models consume
+        # their resource data.
+        self.add_discrete_input(
+            "solar_resource_data",
+            val={},
+            desc="Weather resource data dictionary providing ambient conditions",
+        )
+
     def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
         """
         Computation for the OM component.
