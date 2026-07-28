@@ -70,6 +70,8 @@ supported_models = _ModelRegistry(
         "PYSAMSolarPlantPerformanceModel": "converters.solar:PYSAMSolarPlantPerformanceModel",
         "ATBUtilityPVCostModel": "converters.solar:ATBUtilityPVCostModel",
         "ATBResComPVCostModel": "converters.solar:ATBResComPVCostModel",
+        "PYSAMGeothermalPlantPerformanceModel": "converters.geothermal:PYSAMGeothermalPlantPerformanceModel",
+        "GeothermalPlantCostModel": "converters.geothermal:GeothermalPlantCostModel",
         "PySAMTidalPerformanceModel": "converters.water_power:PySAMTidalPerformanceModel",
         "PySAMMarineCostModel": "converters.water_power:PySAMMarineCostModel",
         "RunOfRiverHydroPerformanceModel": "converters.water_power:RunOfRiverHydroPerformanceModel",

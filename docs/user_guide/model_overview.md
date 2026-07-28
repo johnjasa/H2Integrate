@@ -137,6 +137,12 @@ auto-generated API page.
     + {py:class}`~h2integrate.converters.hydrogen.geologic.aspen_surface_processing.AspenGeoH2SurfaceCostModel` - OpenMDAO component for modeling the cost of a surface processing system for a natural geologic hydrogen plant based on curve fits from an ASPEN model.
     + {py:class}`~h2integrate.converters.hydrogen.geologic.mathur_modified.GeoH2SubsurfaceCostModel` - An OpenMDAO component for modeling subsurface well costs in geologic hydrogen plants.
 
+- `geothermal`: geothermal power plants
+  - performance models:
+    + {py:class}`~h2integrate.converters.geothermal.geothermal_pysam.PYSAMGeothermalPlantPerformanceModel` - An OpenMDAO component that wraps the PySAM Geothermal (GETEM) model to produce electricity.
+  - cost models:
+    + {py:class}`~h2integrate.converters.geothermal.geothermal_cost.GeothermalPlantCostModel` - Capacity-based cost model for a geothermal power plant.
+
 - `grid`: electricity grid connection
   - performance models:
     + {py:class}`~h2integrate.converters.grid.grid.GridPerformanceModel` - Model a grid interconnection point.
