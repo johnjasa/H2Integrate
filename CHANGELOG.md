@@ -44,6 +44,7 @@
 - Added dynamic operating constraints (turndown, ramping, warm/cold start delays) to `AmmoniaSynLoopPerformanceModel` and split `AmmoniaSynLoopCostModel` into its own module. [PR 770](https://github.com/NatLabRockies/H2Integrate/pull/770)
 - Speed up the slowest tests in the suite by swapping the Floris wind model for `PYSAMWindPlantPerformanceModel` in examples 01 (`01_onshore_steel_mn`) and 02 (`02_texas_ammonia`), updating the affected `test_steel_example`/`test_simple_ammonia_example` expected values, fixing a pre-existing `cases.sql` cache-path bug and module-scoping the fixtures in `h2integrate/postprocess/test/test_sql_timeseries_to_csv.py` so the example only runs once for all four tests. [PR 782](https://github.com/NatLabRockies/H2Integrate/pull/782)
 - Exposed `n_timesteps`, `dt`, `plant_life`, and `fraction_of_year_simulated` as attributes on `CostModelBaseClass` (matching `PerformanceModelBaseClass`) and updated all cost and performance model subclasses across `h2integrate/` to use these attributes instead of reading them from `plant_config`, removing redundant boilerplate from individual components. [PR 783](https://github.com/NatLabRockies/H2Integrate/pull/783)
+- Connect each cost-aware system-level controller's `{tech}_buy_price` input directly to the technology's own buy-price input via OpenMDAO 3.44 input-to-input connections, so a single `prob.set_val()` on (for example) `grid.electricity_buy_price` now propagates to the SLC. [PR 791](https://github.com/NatLabRockies/H2Integrate/pull/791)
 - Added system-level-controller unit tests that confirm the `cost_per_tech: feedstock` mode correctly sums `VarOpEx` from all upstream feedstocks for a multi-feedstock dispatchable, including a fuel-cell-style hydrogen-plus-oxygen scenario and a case with feedstocks at different graph depths. [PR 793](https://github.com/NatLabRockies/H2Integrate/pull/793)
 - Rewrote the "Adding a new technology" developer guide. Also replaced the hand-maintained model overview page with an auto-generated section (`docs/generate_model_overview.py`) that classifies every registered class in `supported_models` and appends the first sentence of each class's docstring. Migrated `.readthedocs.yaml` to invoke `docs/build_book.sh` via `build.commands` so hosted and local builds stay in sync. [PR 787](https://github.com/NatLabRockies/H2Integrate/pull/787)
 - Moves `h2integrate/resource/utilities/file_tools.py::check_resource_dir` to a general function
@@ -73,7 +74,8 @@
 - Added capability to specify demand technology for system-level control, and renamed the framework-derived system-level control classification dict from `slc_config` to `slc_topology` to distinguish it from the user-authored `control_parameters` block. [PR 784](https://github.com/NatLabRockies/H2Integrate/pull/784)
 - Add support for slice notation in technology connections to allow users to connect between variables of different shapes. [PR 774](https://github.com/NatLabRockies/H2Integrate/pull/774)
 - Updated `commodity_sell_price` input to `ProFastNPV` to be per year of the plant life. Also updated `BasicProFASTParameterConfig.as_dict()` so explicitly input escalation values are not overwritten to the general inflation rate [PR 799](https://github.com/NatLabRockies/H2Integrate/pull/799)
-
+- Added `calc_azimuth_angle()` to `PYSAMSolarPlantPerformanceModel` to provide default azimuth angle based on whether the site is in the northern or southern hemisphere [PR 806](https://github.com/NatLabRockies/H2Integrate/pull/806)
+- Corrected water rate units in pipe feedstock from galUS to galUS/h [PR 813](https://github.com/NatLabRockies/H2Integrate/pull/813)
 
 ## 0.8 [April 15, 2026]
 
@@ -131,6 +133,7 @@
 - Added infrastructure for running models with non-hourly time steps via a class attribute `_time_step_bounds` and sets new time step bounds of 5-minutes to 1-hour for the grid components. [PR 653](https://github.com/NatLabRockies/H2Integrate/pull/653) and [PR 671](https://github.com/NatLabRockies/H2Integrate/pull/671)
 - Remove demand-related outputs from storage performance models and replace usage with demand components [PR 666](https://github.com/NatLabRockies/H2Integrate/pull/666)
 - Added a compressed gas hydrogen storage model [PR 680](https://github.com/NatLabRockies/H2Integrate/pull/680)
+- Generalized functions for retrieving and setting environment variables in `h2integrate/core/test/test_env_tools.py`. The main function used to get and/or set environment variables is `get_environment_variables`, which is now used by the `get_nlr_developer_api_key` and `get_nlr_developer_api_email` functions [PR 798](https://github.com/NatLabRockies/H2Integrate/pull/798)
 
 ## 0.7.2 [April 9, 2026]
 

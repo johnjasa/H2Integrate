@@ -10,6 +10,7 @@ from retry_requests import retry
 
 from h2integrate.core.validators import range_val
 from h2integrate.resource.resource_base import ResourceBaseAPIConfig
+from h2integrate.resource.utilities.download_tools import make_time_index_openmeteo
 from h2integrate.resource.solar.solar_resource_base import SolarResourceBaseAPIModel
 
 
@@ -97,7 +98,8 @@ class OpenMeteoHistoricalSolarResource(SolarResourceBaseAPIModel):
             # "solar_zenith_angle": "deg",
             "snow_depth": "m",
             "rain": "mm",  # "precipitable_water": "cm",
-            "albedo": "percent",
+            "albedo": "unitless",
+            "is_day": "unitless",
         }
         # get the data dictionary
         data = self.get_data(self.config.latitude, self.config.longitude)
@@ -143,8 +145,10 @@ class OpenMeteoHistoricalSolarResource(SolarResourceBaseAPIModel):
         Returns:
             str: url to use for API call.
         """
+
         start_year = int(self.config.resource_year - 1)
         end_year = int(self.config.resource_year + 1)
+
         input_data = {
             "latitude": latitude,
             "longitude": longitude,
@@ -186,11 +190,16 @@ class OpenMeteoHistoricalSolarResource(SolarResourceBaseAPIModel):
 
         # Make time column in ISO 8601 format
         time_data = pd.date_range(
-            start=pd.to_datetime(hourly_data.Time(), unit="s"),
-            end=pd.to_datetime(hourly_data.TimeEnd(), unit="s"),
+            start=pd.to_datetime(hourly_data.Time(), unit="s", utc=True),
+            end=pd.to_datetime(hourly_data.TimeEnd(), unit="s", utc=True),
             freq=pd.Timedelta(seconds=hourly_data.Interval()),
             inclusive="left",
         )
+
+        if response.UtcOffsetSeconds() != 0:
+            # Data downloaded for local time
+            # convert timestamps to local time
+            time_data = time_data.tz_convert(response.Timezone().decode())
 
         # Convert timeseries data to a DataFrame
         df = pd.DataFrame(ts_data, index=time_data)
@@ -216,16 +225,21 @@ class OpenMeteoHistoricalSolarResource(SolarResourceBaseAPIModel):
             header_data.update(
                 {"timezone_abbreviation": response.TimezoneAbbreviation().decode("utf-8")}
             )
+            # header_data["data_tz"] = "local_with_utc_offset"
         else:
             if response.UtcOffsetSeconds() == 0:
                 header_data.update({"timezone_abbreviation": "GMT"})
+                # header_data["data_tz"] = "UTC"
             else:
                 tz = response.UtcOffsetSeconds() / 3600
                 header_data.update({"timezone_abbreviation": f"GMT{tz}"})
+                # header_data["data_tz"] = "local_with_utc_offset"
 
         header1 = ",".join(k for k in header_data.keys())
         header2 = ",".join(str(v) for v in header_data.values())
         header = f"{header1}\n{header2}\n\n"
+
+        # DATA downloaded from the web has time in the timezone corresponding to utc_offset_seconds
 
         # Combine header plus data arrays
         txt = header + data_str
@@ -280,8 +294,13 @@ class OpenMeteoHistoricalSolarResource(SolarResourceBaseAPIModel):
 
         data = pd.read_csv(fpath, header=2)
 
+        time = make_time_index_openmeteo(
+            data,
+            header_dict["timezone"],
+            float(header_dict["latitude"]),
+            float(header_dict["longitude"]),
+        )
         # Make time columns
-        time = pd.DatetimeIndex(data["time"])
         data["Year"] = time.year
         data["Month"] = time.month
         data["Day"] = time.day
