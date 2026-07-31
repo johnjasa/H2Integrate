@@ -250,6 +250,16 @@ class AmmoniaSynLoopPerformanceModel(ResizeablePerformanceModelBaseClass):
         self.add_input("nitrogen_in", val=0.0, shape=self.n_timesteps, units="kg/h")
         self.add_input("electricity_in", val=0.0, shape=self.n_timesteps, units="kW")
 
+        # Dispatchable models receive a command value from the system-level controller
+        if "system_level_control" in self.options["plant_config"]:
+            self.add_input(
+                f"{self.commodity}_command_value",
+                val=0.0,
+                shape=self.n_timesteps,
+                units=self.commodity_rate_units,
+                desc=f"Command value for {self.commodity} production from SLC",
+            )
+
         self.add_output("nitrogen_out", val=0.0, shape=self.n_timesteps, units="kg/h")
         self.add_output("hydrogen_out", val=0.0, shape=self.n_timesteps, units="kg/h")
         self.add_output("electricity_out", val=0.0, shape=self.n_timesteps, units="kW")
@@ -456,6 +466,14 @@ class AmmoniaSynLoopPerformanceModel(ResizeablePerformanceModelBaseClass):
         # Determine what the limiting factor is for each hour
         limiters = np.maximum.reduce([cap_lim * 3, limiters])
         outputs["limiting_input"] = limiters
+
+        # Apply command_value from the system-level controller if present. This throttles
+        # ammonia production down to the commanded (demanded) rate; the unused hydrogen,
+        # nitrogen, and electricity then pass through as the corresponding *_out streams.
+        # Capping here (before apply_dynamic_operation) ensures feedstock consumption scales
+        # with the throttled production rather than the unconstrained potential.
+        if "system_level_control" in self.options["plant_config"]:
+            nh3_prod = np.minimum(nh3_prod, inputs[f"{self.commodity}_command_value"])
 
         # Apply dynamic operation
         nh3_prod, consumption_multiplier = self.apply_dynamic_operation(inputs, nh3_prod)

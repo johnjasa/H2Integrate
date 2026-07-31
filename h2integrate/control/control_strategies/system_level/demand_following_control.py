@@ -79,7 +79,18 @@ class DemandFollowingControl(SystemLevelControlBase):
         )
         for dispatchable_tech in self.dispatchable_techs:
             commodity_from_tech = self._get_commodity_for_tech(dispatchable_tech)
-            if commodity in commodity_from_tech:
-                outputs[f"{dispatchable_tech}_{commodity}_set_point"] = (
-                    remaining_demand / n_dispatchable
-                )
+            for tech_commodity in commodity_from_tech:
+                if tech_commodity == commodity:
+                    outputs[f"{dispatchable_tech}_{commodity}_set_point"] = (
+                        remaining_demand / n_dispatchable
+                    )
+                else:
+                    # Intermediate dispatchable converter producing a non-demanded commodity
+                    # (e.g. an electrolyzer supplying hydrogen to a downstream ammonia synloop,
+                    # or an ASU supplying nitrogen). Command it to its rated production so it runs
+                    # at full output and does not starve the technology that produces the demanded
+                    # commodity. Mirrors the flexible-tech handling above.
+                    if f"{dispatchable_tech}_rated_{tech_commodity}_production" in inputs:
+                        outputs[f"{dispatchable_tech}_{tech_commodity}_set_point"] = inputs[
+                            f"{dispatchable_tech}_rated_{tech_commodity}_production"
+                        ] * np.ones(self.n_timesteps)

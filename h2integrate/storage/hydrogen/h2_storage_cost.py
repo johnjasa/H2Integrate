@@ -619,13 +619,20 @@ class CompressedGasStorageCostModel(HydrogenStorageBaseCostModel):
         )
         n_compressors = np.ceil(terminal_capacity_kg_d / 24 / 50)  # Cell B59
         # Not sure where the 50 comes from in HDSAM - using rule of thumb of 1 unit per 50 kg/hr?
-        storage_compressor = Compressor(
-            compressor_type="storage",
-            p_inlet=self.config.inlet_pressure_bar,
-            p_outlet=self.config.storage_pressure_bar,
-            flow_rate_kg_d=terminal_capacity_kg_d,
-            n_compressors=n_compressors,
-        )
+        # When the terminal handles (essentially) no hydrogen throughput -- e.g. on the first
+        # iteration of a system-level-control solve, before upstream production has converged --
+        # no storage compressor is required. Skip the compressor sizing in that case to avoid the
+        # divide-by-zero (flow / n_compressors) and log(0) in the power/cost correlations, which
+        # would otherwise produce NaN CapEx and abort the plant's nonlinear solver.
+        needs_compressor = terminal_capacity_kg_d > 0 and n_compressors >= 1
+        if needs_compressor:
+            storage_compressor = Compressor(
+                compressor_type="storage",
+                p_inlet=self.config.inlet_pressure_bar,
+                p_outlet=self.config.storage_pressure_bar,
+                flow_rate_kg_d=terminal_capacity_kg_d,
+                n_compressors=n_compressors,
+            )
 
         # ============================================================================
         # Calculate CAPEX
@@ -638,10 +645,13 @@ class CompressedGasStorageCostModel(HydrogenStorageBaseCostModel):
         # "Truck Loading Compressor" and "Truck Scale" from HDSAM are not included
 
         # Storage Compressor
-        storage_compressor.compressor_power()
-        unit_power_kw, system_power_kw = storage_compressor.compressor_system_power()
-        comp_capex_2016, _ = storage_compressor.compressor_costs()
-        comp_capex = comp_capex_2016 * 1.36013289036545 / 1.2890365448505
+        if needs_compressor:
+            storage_compressor.compressor_power()
+            unit_power_kw, system_power_kw = storage_compressor.compressor_system_power()
+            comp_capex_2016, _ = storage_compressor.compressor_costs()
+            comp_capex = comp_capex_2016 * 1.36013289036545 / 1.2890365448505
+        else:
+            comp_capex = 0.0
         # Values taken from CEPCI table in "Feedstock & Utility Prices"
 
         # Compressed Gas H2 Storage

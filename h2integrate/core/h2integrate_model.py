@@ -609,11 +609,31 @@ class H2IntegrateModel:
             "storage",
             "feedstock",
         ]
-        tech_to_commodity = {
-            (e[0], e[-1])
-            for e in sources_to_commodities
-            if self.tech_control_classifiers[e[0]] in control_classifiers_to_connect
-        }
+        # Controllable converters/storage (flexible, dispatchable, storage) are
+        # only controlled on the commodity they actually produce (their own
+        # ``commodity``). A converter may also carry *other* commodities on its
+        # outgoing edges -- e.g. an air separation unit that consumes electricity
+        # to make nitrogen but passes the leftover electricity straight through
+        # to a downstream electrolyzer. Those pass-through commodities are plumbed
+        # physically via ``technology_interconnections`` and must not be treated
+        # as controllable production, because the tech exposes no
+        # ``rated_{commodity}_production`` / ``{commodity}_set_point`` for them.
+        # ``fixed`` and ``feedstock`` techs are only read (never sent set-points),
+        # so all of their output commodities are kept.
+        set_point_classifiers = {"flexible", "dispatchable", "storage"}
+        tech_to_commodity = set()
+        for tech, commodity in sources_to_commodities:
+            classifier = self.tech_control_classifiers[tech]
+            if classifier not in control_classifiers_to_connect:
+                continue
+            own_commodity = self.tech_control_commodities.get(tech)
+            if (
+                classifier in set_point_classifiers
+                and own_commodity is not None
+                and commodity != own_commodity
+            ):
+                continue
+            tech_to_commodity.add((tech, commodity))
         slc_topology["tech_to_commodity"] = tech_to_commodity
 
         # Store classification results in plant_config for SLC component
@@ -875,6 +895,11 @@ class H2IntegrateModel:
         self.cost_models = []
         self.finance_models = []
         self.tech_control_classifiers = {}  # for system-level control
+        # Maps tech name -> the commodity that tech actually *controls* (its own
+        # ``commodity``). Used by the SLC so a tech only receives set-points for
+        # the commodity it produces, not for commodities it merely passes
+        # through on an outgoing edge (see ``_classify_slc_technologies``).
+        self.tech_control_commodities = {}  # for system-level control
 
         combined_performance_and_cost_models = [
             "HOPPComponent",
@@ -933,6 +958,7 @@ class H2IntegrateModel:
                 )
                 self._check_time_step(perf_model, comp)
                 self.tech_control_classifiers.update({tech_name: "feedstock"})
+                self.tech_control_commodities[tech_name] = getattr(comp, "commodity", None)
                 self.plant.add_subsystem(f"{tech_name}_source", comp)
             else:
                 tech_group = self.plant.add_subsystem(tech_name, om.Group())
@@ -971,6 +997,7 @@ class H2IntegrateModel:
 
                     self._check_control_classifier(perf_model, comp)
                     self.tech_control_classifiers.update({tech_name: comp._control_classifier})
+                    self.tech_control_commodities[tech_name] = getattr(comp, "commodity", None)
                     self._check_time_step(perf_model, comp)
                     om_model_object = tech_group.add_subsystem(perf_model, comp, promotes=["*"])
                     self.performance_models.append(om_model_object)
@@ -1012,6 +1039,12 @@ class H2IntegrateModel:
                                 classifier = getattr(perf_cls, "_control_classifier", None)
                                 if classifier is not None:
                                     self.tech_control_classifiers[tech_name] = classifier
+                            # Record the tech's own control commodity (set in the
+                            # performance model's ``initialize``) so the SLC only
+                            # sends set-points for the commodity it produces.
+                            self.tech_control_commodities[tech_name] = getattr(
+                                om_model_object, "commodity", None
+                            )
 
                 if perf_om_object is not None:
                     self._add_passthrough_controller(
