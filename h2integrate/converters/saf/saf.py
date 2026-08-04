@@ -17,6 +17,8 @@ class SAFPerformanceModel(PerformanceModelBaseClass):
     Computes annual saf production based on plant capacity and capacity factor.
     """
 
+    _control_classifier = "fixed"
+
     _time_step_bounds = (
         3600,
         3600,
@@ -36,8 +38,7 @@ class SAFPerformanceModel(PerformanceModelBaseClass):
         )
 
         self.add_input("plant_capacity_mtpy", val=self.config.plant_capacity_mtpy, units="t/year")
-        n_timesteps = self.options["plant_config"]["plant"]["simulation"]["n_timesteps"]
-        self.add_input("lignin_in", val=0.0, shape=n_timesteps, units="kg/h")
+        self.add_input("lignin_in", val=0.0, shape=self.n_timesteps, units="kg/h")
 
     def compute(self, inputs, outputs):
         plant_capacity_mtpy = inputs["plant_capacity_mtpy"]

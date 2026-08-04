@@ -17,6 +17,8 @@ class PaperMillPerformanceModel(PerformanceModelBaseClass):
     Computes annual paper production based on plant capacity and capacity factor.
     """
 
+    _control_classifier = "fixed"
+
     _time_step_bounds = (
         3600,
         3600,
@@ -38,13 +40,12 @@ class PaperMillPerformanceModel(PerformanceModelBaseClass):
 
         self.add_input("plant_capacity_mtpy", val=self.config.plant_capacity_mtpy, units="t/year")
 
-        n_timesteps = self.options["plant_config"]["plant"]["simulation"]["n_timesteps"]
-        self.add_output("lignin_out", val=0.0, shape=n_timesteps, units="kg/h")
-        self.add_output("rated_lignin_production", shape=n_timesteps, val=0.0, units="kg/h")
+        self.add_output("lignin_out", val=0.0, shape=self.n_timesteps, units="kg/h")
+        self.add_output("rated_lignin_production", shape=self.n_timesteps, val=0.0, units="kg/h")
         self.add_output("total_lignin_produced", val=0.0, units="kg")
         self.add_output("annual_lignin_produced", val=0.0, units="kg/year")
 
-        self.add_output("pulp_out", val=0.0, shape=n_timesteps, units="t/h")
+        self.add_output("pulp_out", val=0.0, shape=self.n_timesteps, units="t/h")
         self.add_output("rated_pulp_out_production", val=0.0, units="t/h")
         self.add_output("total_pulp_out_produced", val=0.0, units="t")
         self.add_output("annual_pulp_out_produced", val=0.0, units="t/year")
