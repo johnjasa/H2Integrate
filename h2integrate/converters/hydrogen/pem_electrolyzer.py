@@ -41,6 +41,16 @@ class ECOElectrolyzerPerformanceModelConfig(ResizeablePerformanceModelBaseConfig
             Defaults to True. The fatigue calculation is the most expensive part of the
             electrolyzer performance model, so it can be disabled (e.g. for sizing
             optimizations where it has negligible effect on the result).
+        continuous_clusters (bool): Flag to treat the number of clusters as a continuous
+            quantity instead of rounding up to a whole cluster. Defaults to False. When
+            enabled, the plant is modeled as ``floor(n)`` full clusters plus one marginal
+            cluster whose contribution is weighted by the remaining fraction, so both
+            hydrogen production and installed capacity vary smoothly with the cluster
+            count. This is intended for optimizations that treat the cluster count as a
+            continuous design variable, where the default rounding turns the objective
+            into a staircase with flat regions that gradient-based and trust-region
+            optimizers cannot navigate. Results are identical to the default behavior
+            whenever the cluster count is a whole number.
         electrolyzer_capex (int): $/kW overnight installed capital costs for a 1 MW system in
             2022 USD/kW (DOE hydrogen program record 24005 Clean Hydrogen Production Cost Scenarios
             with PEM Electrolyzer Technology 05/20/24) #TODO: convert to refs
@@ -55,6 +65,7 @@ class ECOElectrolyzerPerformanceModelConfig(ResizeablePerformanceModelBaseConfig
     include_degradation_penalty: bool = field()
     turndown_ratio: float = field(validator=gt_zero)
     use_fatigue_deg: bool = field(default=True)
+    continuous_clusters: bool = field(default=False)
     electrolyzer_capex: int = field()
 
 
@@ -150,7 +161,15 @@ class ECOElectrolyzerPerformanceModel(ElectrolyzerPerformanceBaseClass):
         elif size_mode != "normal":
             raise NotImplementedError("Sizing mode '%s' not implemented".format())
 
-        n_pem_clusters = int(math.ceil(electrolyzer_size_mw / self.config.cluster_rating_MW))
+        clusters_required = float(np.ravel(electrolyzer_size_mw)[0]) / self.config.cluster_rating_MW
+        if self.config.continuous_clusters:
+            # Keep the cluster count continuous. The PEM model then simulates
+            # floor(clusters_required) full clusters plus a marginal cluster weighted by the
+            # remaining fraction, so hydrogen production and installed capacity are
+            # continuous in the cluster count rather than stepping at each whole cluster.
+            n_pem_clusters = clusters_required
+        else:
+            n_pem_clusters = math.ceil(clusters_required)
 
         electrolyzer_actual_capacity_MW = n_pem_clusters * self.config.cluster_rating_MW
         pem_param_dict = {

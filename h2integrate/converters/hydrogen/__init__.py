@@ -17,3 +17,6 @@ from h2integrate.converters.hydrogen.htse_electrolyzer import (
     HTSEPerformanceModel,
     HTSECostModel,
 )
+from h2integrate.converters.hydrogen.simple_electrolyzer import (
+    SimpleElectrolyzerPerformanceModel,
+)

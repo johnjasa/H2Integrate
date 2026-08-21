@@ -75,6 +75,7 @@ supported_models = _ModelRegistry(
         "RunOfRiverHydroPerformanceModel": "converters.water_power:RunOfRiverHydroPerformanceModel",
         "RunOfRiverHydroCostModel": "converters.water_power:RunOfRiverHydroCostModel",
         "ECOElectrolyzerPerformanceModel": "converters.hydrogen:ECOElectrolyzerPerformanceModel",
+        "SimpleElectrolyzerPerformanceModel": "converters.hydrogen:SimpleElectrolyzerPerformanceModel",
         "HTSEPerformanceModel": "converters.hydrogen:HTSEPerformanceModel",
         "HTSECostModel": "converters.hydrogen:HTSECostModel",
         "SingliticoCostModel": "converters.hydrogen:SingliticoCostModel",

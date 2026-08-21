@@ -80,6 +80,10 @@
 - Corrected water rate units in pipe feedstock from galUS to galUS/h [PR 813](https://github.com/NatLabRockies/H2Integrate/pull/813)
 - Corrected timestamps in OpenMeteo resource downloads when resource data is downloaded in local time [PR #814](https://github.com/NatLabRockies/H2Integrate/pull/814)
 - Added a thermal-nuclear (light-water reactor) model and a high-temperature steam electrolysis model. [PR 807](https://github.com/NatLabRockies/H2Integrate/pull/807)
+- Added two ways to smooth physically integer design variables so continuous optimizers do not stall on staircase objectives. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
+  - Added a general N-dimensional structured-grid surrogate framework in `h2integrate/core/surrogate.py`, configured per technology under `model_inputs/surrogate_parameters`, and enabled it for `PYSAMWindPlantPerformanceModel` over `num_turbines`.
+  - Added an opt-in `continuous_clusters` option to `ECOElectrolyzerPerformanceModel` that models a fractional cluster count as whole clusters plus one weighted marginal cluster, leaving whole-cluster results unchanged.
+- Added `SimpleElectrolyzerPerformanceModel`, a constant-efficiency electrolyzer performance model that converts electricity to hydrogen using a single kWh/kg value and a turndown ratio. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
 
 ## 0.8 [April 15, 2026]
 

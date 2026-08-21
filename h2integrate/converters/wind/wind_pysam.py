@@ -8,6 +8,7 @@ import PySAM.Windpower as Windpower
 import matplotlib.pyplot as plt
 from attrs import field, define
 
+from h2integrate.core.surrogate import SurrogateMixin
 from h2integrate.core.utilities import BaseConfig, merge_shared_inputs
 from h2integrate.core.validators import gt_zero, contains, gte_zero
 from h2integrate.core.model_baseclasses import CacheBaseClass
@@ -191,10 +192,16 @@ class PYSAMWindPlantPerformanceModelConfig(BaseConfig):
         return design_dict
 
 
-class PYSAMWindPlantPerformanceModel(WindPerformanceBaseClass, CacheBaseClass):
+class PYSAMWindPlantPerformanceModel(SurrogateMixin, WindPerformanceBaseClass, CacheBaseClass):
     """
     An OpenMDAO component that wraps a WindPlant model.
     It takes wind parameters as input and outputs power generation data.
+
+    The plant depends only on its design variables and a fixed wind resource time
+    series, so it supports the structured-grid surrogate described in
+    ``h2integrate.core.surrogate``. Enabling the surrogate over ``num_turbines``
+    removes the staircase that the integer turbine count would otherwise introduce
+    into the objective of a continuous optimization.
     """
 
     _time_step_bounds = (
@@ -284,6 +291,8 @@ class PYSAMWindPlantPerformanceModel(WindPerformanceBaseClass, CacheBaseClass):
             "wind_speed": 3,
             "wind_direction": 4,
         }
+
+        self.setup_surrogate()
 
     def format_resource_data(self, hub_height, wind_resource_data):
         """Format wind resource data into the format required for the
@@ -462,7 +471,7 @@ class PYSAMWindPlantPerformanceModel(WindPerformanceBaseClass, CacheBaseClass):
             success = True
         return success
 
-    def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
+    def compute_physics(self, inputs, outputs, discrete_inputs, discrete_outputs):
         # If this exact (config + inputs + resource) combination has been run
         # before and caching is enabled, load the cached outputs and skip the
         # (expensive) PySAM execution entirely.
@@ -474,13 +483,18 @@ class PYSAMWindPlantPerformanceModel(WindPerformanceBaseClass, CacheBaseClass):
 
         rotor_diameter = inputs["rotor_diameter"][0]
         turbine_rating_kw = inputs["wind_turbine_rating"][0]
-        n_turbs = int(np.round(inputs["num_turbines"][0]))
+        # The optimizer sees ``num_turbines`` as continuous. The PySAM simulation needs a
+        # whole number of turbines, but the reported rated capacity (which drives the cost
+        # models) uses the raw continuous value so that CapEx and OpEx do not become a
+        # staircase. The two differ by at most half a turbine.
+        num_turbines = float(inputs["num_turbines"][0])
+        n_turbs = int(np.round(num_turbines))
 
         # With no turbines there is no production, so zero out all outputs and skip the
         # rest of the compute (which would otherwise divide by a zero max production).
         if n_turbs == 0:
             outputs["electricity_out"] = np.zeros(self.n_timesteps)
-            outputs["rated_electricity_production"] = 0.0
+            outputs["rated_electricity_production"] = turbine_rating_kw * num_turbines
             outputs["total_electricity_produced"] = 0.0
             outputs["annual_electricity_produced"] = 0.0
             outputs["capacity_factor"] = 0.0
@@ -525,7 +539,7 @@ class PYSAMWindPlantPerformanceModel(WindPerformanceBaseClass, CacheBaseClass):
         self.system_model.execute(0)
 
         outputs["electricity_out"] = self.system_model.Outputs.gen
-        outputs["rated_electricity_production"] = self.system_model.Farm.system_capacity
+        outputs["rated_electricity_production"] = turbine_rated_power_kW * num_turbines
 
         # outputs["total_capacity"] = self.system_model.Farm.system_capacity
         # outputs["annual_energy"] = self.system_model.Outputs.annual_energy

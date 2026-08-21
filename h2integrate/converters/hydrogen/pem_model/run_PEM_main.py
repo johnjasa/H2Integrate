@@ -32,7 +32,11 @@ class run_PEM_clusters:
     """Inputs:
     `electrical_power_signal`: plant power signal in kWh
     `system_size_mw`: total installed electrolyzer capacity (for green steel this is 1000 MW)
-    `num_clusters`: number of PEM clusters that can be run independently
+    `num_clusters`: number of PEM clusters that can be run independently. May be fractional,
+    in which case the plant is modelled as ``floor(num_clusters)`` full clusters plus one
+    marginal cluster whose contribution is weighted by the remaining fraction. This keeps
+    plant output continuous with respect to a continuous cluster count, which matters when
+    the cluster count is an optimization design variable.
     ->ESG note: I have been using num_clusters = 8 for centralized cases
     Nomenclature:
     `cluster`: cluster is built up of 1MW stacks
@@ -54,6 +58,18 @@ class run_PEM_clusters:
         # capacity of each cluster, must be a multiple of 1 MW
 
         self.num_clusters = num_clusters
+
+        # Split a (possibly fractional) cluster count into whole clusters plus a marginal
+        # cluster. ``cluster_weights`` is how much of each simulated cluster actually
+        # exists, and is used to weight the per-cluster results when they are aggregated.
+        n_full_clusters = int(np.floor(num_clusters + 1e-9))
+        marginal_cluster_weight = float(num_clusters) - n_full_clusters
+        if marginal_cluster_weight > 1e-9:
+            self.cluster_weights = np.array([1.0] * n_full_clusters + [marginal_cluster_weight])
+        else:
+            self.cluster_weights = np.ones(n_full_clusters)
+        self.n_clusters_run = len(self.cluster_weights)
+
         self.user_params = user_defined_electrolyzer_params
         self.plant_life_yrs = useful_life
         # Do not modify stack_rating_kw or stack_min_power_kw
@@ -148,7 +164,7 @@ class run_PEM_clusters:
 
         Returns:
             np.ndarray: Power dispatched to each cluster, shape
-            ``(num_clusters, n_timesteps)`` in kW.
+            ``(n_clusters_run, n_timesteps)`` in kW.
         """
         start = time.perf_counter()
 
@@ -168,20 +184,25 @@ class run_PEM_clusters:
         else:
             num_clusters_on = np.floor(input_power_kw / self.cluster_min_power).astype(int)
 
-        # Clamp the cluster count to [0, num_clusters].
-        np.clip(num_clusters_on, 0, self.num_clusters, out=num_clusters_on)
+        # Clamp the cluster count to [0, n_clusters_run].
+        np.clip(num_clusters_on, 0, self.n_clusters_run, out=num_clusters_on)
+
+        # Number of cluster-equivalents operating. The marginal cluster of a fractional
+        # cluster count only counts for its weight, so the power split (and therefore the
+        # plant output) stays continuous as the cluster count crosses an integer.
+        equivalent_clusters_on = np.minimum(num_clusters_on, self.num_clusters)
 
         # Safe division: where no clusters are on, per-cluster power is 0 kW.
         power_per_cluster = np.divide(
             input_power_kw,
-            num_clusters_on,
+            equivalent_clusters_on,
             out=np.zeros_like(input_power_kw),
-            where=num_clusters_on > 0,
+            where=equivalent_clusters_on > 0,
         )
 
-        # Build the (n_timesteps, num_clusters) dispatch matrix by broadcasting:
+        # Build the (n_timesteps, n_clusters_run) dispatch matrix by broadcasting:
         # the first num_clusters_on[t] columns get power_per_cluster[t], rest 0.
-        cluster_idx = np.arange(self.num_clusters)[np.newaxis, :]
+        cluster_idx = np.arange(self.n_clusters_run)[np.newaxis, :]
         active_mask = cluster_idx < num_clusters_on[:, np.newaxis]
         power_to_clusters = np.where(active_mask, power_per_cluster[:, np.newaxis], 0.0)
 
@@ -205,7 +226,7 @@ class run_PEM_clusters:
         # TODO fix the power input - don't make it required!
         # in_dict={'dt':3600}
         clusters = PEMClusters(self.cluster_cap_mw, self.plant_life_yrs, **self.user_params)
-        stacks = [clusters] * self.num_clusters
+        stacks = [clusters] * self.n_clusters_run
         end = time.perf_counter()
         if self.verbose:
             print(f"Took {round(end - start, 3)} sec to run the create clusters")

@@ -125,7 +125,15 @@ class PerformanceModelBaseClass(om.ExplicitComponent):
         Only operates when the model has ``_control_classifier == "flexible"``.
         Should be called at the end of each flexible model's ``compute()`` method
         after the raw production has been written to ``outputs[f"{commodity}_out"]``.
+
+        Curtailment is skipped while a surrogate is being trained (see
+        ``h2integrate.core.surrogate.SurrogateMixin``) so that the surrogate captures
+        the uncurtailed production. The surrogate re-applies curtailment to its
+        predictions.
         """
+        if getattr(self, "_surrogate_training", False):
+            return
+
         if "system_level_control" in self.options["plant_config"]:
             if getattr(self, "_control_classifier", None) != "flexible":
                 return

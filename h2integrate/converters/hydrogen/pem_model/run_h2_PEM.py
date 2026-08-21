@@ -5,7 +5,58 @@ from h2integrate.converters.hydrogen.pem_model.run_PEM_main import run_PEM_clust
 from h2integrate.converters.hydrogen.pem_model.PEM_H2_LT_electrolyzer_Clusters import eta_h2_hhv
 
 
-def clean_up_final_outputs(h2_tot, h2_ts):
+def weighted_cluster_sum(per_cluster_results, key, cluster_weights):
+    """Sum one row of a per-cluster results frame, weighting each cluster.
+
+    Args:
+        per_cluster_results (pd.DataFrame): Results with one column per simulated cluster.
+        key (str): Row label to aggregate.
+        cluster_weights (np.ndarray): How much of each simulated cluster exists. All ones
+            for a whole number of clusters; the final entry is fractional when the
+            continuous-cluster relaxation is active.
+
+    Returns:
+        float | np.ndarray: Weighted sum across clusters. Rows holding time series return
+        an array; rows holding scalars return a float.
+    """
+    values = per_cluster_results.loc[key].to_numpy()
+    return sum(weight * value for weight, value in zip(cluster_weights, values))
+
+
+def weighted_cluster_mean(per_cluster_results, key, cluster_weights):
+    """Average one row of a per-cluster results frame, weighting each cluster.
+
+    Args:
+        per_cluster_results (pd.DataFrame): Results with one column per simulated cluster.
+        key (str): Row label to aggregate.
+        cluster_weights (np.ndarray): How much of each simulated cluster exists.
+
+    Returns:
+        float | np.ndarray: Weighted mean across clusters.
+    """
+    return weighted_cluster_sum(per_cluster_results, key, cluster_weights) / np.sum(cluster_weights)
+
+
+def weighted_nanmean(values, cluster_weights):
+    """Weighted mean of per-cluster values, ignoring NaN entries.
+
+    Args:
+        values (array_like): One value per simulated cluster, possibly containing NaN
+            for clusters that were never turned on.
+        cluster_weights (np.ndarray): How much of each simulated cluster exists.
+
+    Returns:
+        float: Weighted mean of the non-NaN values, or NaN if every value is NaN.
+    """
+    values = np.asarray(values, dtype=float)
+    cluster_weights = np.asarray(cluster_weights, dtype=float)
+    used = ~np.isnan(values)
+    if not used.any():
+        return np.nan
+    return float(np.sum(cluster_weights[used] * values[used]) / np.sum(cluster_weights[used]))
+
+
+def clean_up_final_outputs(h2_tot, h2_ts, cluster_weights):
     new_h2_tot = h2_tot.drop(
         [
             "Cluster Rated H2 Production [kg/hr]",
@@ -17,7 +68,6 @@ def clean_up_final_outputs(h2_tot, h2_ts):
             "Cluster Rated O2 Production [kg/yr]",
         ]
     )
-    h2_ts.sum(axis=1)
     ts_sum_desc = [
         "Input Power [kWh]",
         "Power Consumed [kWh]",
@@ -28,12 +78,14 @@ def clean_up_final_outputs(h2_tot, h2_ts):
     ]
 
     # new_h2_ts = h2_ts.drop(['V_cell With Deg','Power Per Stack [kW]','Stack Current [A]'])
-    new_h2_ts = h2_ts.loc[ts_sum_desc].sum(axis=1)
+    new_h2_ts = pd.Series(
+        {desc: weighted_cluster_sum(h2_ts, desc, cluster_weights) for desc in ts_sum_desc}
+    )
     return new_h2_ts, new_h2_tot
     # return new_h2_ts,new_h2_tot
 
 
-def combine_cluster_annual_performance_info(h2_tot):
+def combine_cluster_annual_performance_info(h2_tot, cluster_weights):
     clusters = h2_tot.loc["Performance By Year"].index.to_list()
     performance_metrics = list(h2_tot.loc["Performance By Year"].iloc[0].keys())
     [k for k in performance_metrics if "/year" in k]
@@ -45,12 +97,12 @@ def combine_cluster_annual_performance_info(h2_tot):
     # for k in vals_to_sum:
     for k in performance_metrics:
         vals = np.zeros(n_years)
-        for c in clusters:
-            vals += np.array(list(h2_tot.loc["Performance By Year"].loc[c][k].values()))
+        for weight, c in zip(cluster_weights, clusters):
+            vals += weight * np.array(list(h2_tot.loc["Performance By Year"].loc[c][k].values()))
             # vals += np.array(h2_tot.loc['Performance By Year'].loc[c][k].values())
 
         if k in vals_to_average:
-            vals = vals / len(clusters)
+            vals = vals / np.sum(cluster_weights)
         new_dict[k] = dict(zip(yr_keys, vals))
     return new_dict
 
@@ -83,34 +135,54 @@ def run_h2_PEM(
         h2_ts, h2_tot = pem.run_grid_connected_pem(
             electrolyzer_size, hydrogen_production_capacity_required_kgphr
         )
+        cluster_weights = np.ones(h2_tot.shape[1])
     else:
         h2_ts, h2_tot = pem.run()
+        cluster_weights = pem.cluster_weights
+    n_clusters_run = len(cluster_weights)
+
     # dictionaries of performance during each year of simulation,
     # good to use for a more accurate financial analysis
-    annual_avg_performance = combine_cluster_annual_performance_info(h2_tot)
+    annual_avg_performance = combine_cluster_annual_performance_info(h2_tot, cluster_weights)
 
     # time-series info (unchanged)
-    energy_input_to_electrolyzer = h2_ts.loc["Input Power [kWh]"].sum()
-    hydrogen_hourly_production = h2_ts.loc["hydrogen_hourly_production"].sum()
-    oxygen_hourly_production = h2_ts.loc["oxygen_hourly_production"].sum()
-    hourly_system_electrical_usage = h2_ts.loc["Power Consumed [kWh]"].sum()
-    water_hourly_usage = h2_ts.loc["water_hourly_usage_kg"].sum()
+    energy_input_to_electrolyzer = weighted_cluster_sum(h2_ts, "Input Power [kWh]", cluster_weights)
+    hydrogen_hourly_production = weighted_cluster_sum(
+        h2_ts, "hydrogen_hourly_production", cluster_weights
+    )
+    oxygen_hourly_production = weighted_cluster_sum(
+        h2_ts, "oxygen_hourly_production", cluster_weights
+    )
+    hourly_system_electrical_usage = weighted_cluster_sum(
+        h2_ts, "Power Consumed [kWh]", cluster_weights
+    )
+    water_hourly_usage = weighted_cluster_sum(h2_ts, "water_hourly_usage_kg", cluster_weights)
     avg_eff_perc = eta_h2_hhv * hydrogen_hourly_production / hourly_system_electrical_usage
     np.nan_to_num(avg_eff_perc)
     # simulation based average performance (unchanged)
-    h2_tot.loc["Total Uptime [sec]"].mean() / 3600
     water_annual_usage = np.sum(water_hourly_usage)
-    np.sum(hourly_system_electrical_usage)
-    tot_avg_eff = eta_h2_hhv / h2_tot.loc["Total kWh/kg"].mean()
-    cap_factor_sim = h2_tot.loc["PEM Capacity Factor (simulation)"].mean()
+    tot_avg_eff = eta_h2_hhv / weighted_cluster_mean(h2_tot, "Total kWh/kg", cluster_weights)
+    cap_factor_sim = weighted_cluster_mean(
+        h2_tot, "PEM Capacity Factor (simulation)", cluster_weights
+    )
 
     # Beginning of Life (BOL) Rated Specs (attributes/system design)
-    max_h2_pr_hr = h2_tot.loc["Cluster Rated H2 Production [kg/hr]"].sum()
-    max_o2_pr_hr = h2_tot.loc["Cluster Rated O2 Production [kg/hr]"].sum()
-    max_pwr_pr_hr = h2_tot.loc["Cluster Rated Power Consumed [kWh]"].sum()
-    rated_kWh_pr_kg = h2_tot.loc["Stack Rated Efficiency [kWh/kg]"].mean()
-    elec_rated_h2_capacity_kgpy = h2_tot.loc["Cluster Rated H2 Production [kg/yr]"].sum()
-    gal_h20_pr_kg_h2 = h2_tot.loc["gal H20 per kg H2"].mean()
+    max_h2_pr_hr = weighted_cluster_sum(
+        h2_tot, "Cluster Rated H2 Production [kg/hr]", cluster_weights
+    )
+    max_o2_pr_hr = weighted_cluster_sum(
+        h2_tot, "Cluster Rated O2 Production [kg/hr]", cluster_weights
+    )
+    max_pwr_pr_hr = weighted_cluster_sum(
+        h2_tot, "Cluster Rated Power Consumed [kWh]", cluster_weights
+    )
+    rated_kWh_pr_kg = weighted_cluster_mean(
+        h2_tot, "Stack Rated Efficiency [kWh/kg]", cluster_weights
+    )
+    elec_rated_h2_capacity_kgpy = weighted_cluster_sum(
+        h2_tot, "Cluster Rated H2 Production [kg/yr]", cluster_weights
+    )
+    gal_h20_pr_kg_h2 = weighted_cluster_mean(h2_tot, "gal H20 per kg H2", cluster_weights)
 
     atrribute_desc = [
         "Efficiency [kWh/kg]",
@@ -145,8 +217,12 @@ def run_h2_PEM(
         annual_avg_performance["Annual Energy Used [kWh/year]"]
     ).mean()
 
-    average_stack_life_hrs = np.nanmean(h2_tot.loc["Stack Life [hours]"].values)
-    average_time_until_replacement = np.nanmean(h2_tot.loc["Time until replacement [hours]"].values)
+    average_stack_life_hrs = weighted_nanmean(
+        h2_tot.loc["Stack Life [hours]"].values, cluster_weights
+    )
+    average_time_until_replacement = weighted_nanmean(
+        h2_tot.loc["Time until replacement [hours]"].values, cluster_weights
+    )
     life_vals = [
         system_avg_life_capfac,
         system_total_annual_h2_kg_pr_year,
@@ -181,12 +257,14 @@ def run_h2_PEM(
     sim_specs = ["Sim: " + s for s in sim]
     sim_performance = [
         cap_factor_sim,
-        h2_tot.loc["Operational Time / Simulation Time (ratio)"].mean(),
-        h2_tot.loc["Total Input Power [kWh]"].sum(),
-        h2_tot.loc["Total H2 Production [kg]"].sum(),
+        weighted_cluster_mean(
+            h2_tot, "Operational Time / Simulation Time (ratio)", cluster_weights
+        ),
+        weighted_cluster_sum(h2_tot, "Total Input Power [kWh]", cluster_weights),
+        weighted_cluster_sum(h2_tot, "Total H2 Production [kg]", cluster_weights),
         tot_avg_eff,
-        h2_tot.loc["Total Off-Cycles"].sum(),
-        h2_tot.loc["Warm-Up Losses on H2 Production"].sum(),
+        weighted_cluster_sum(h2_tot, "Total Off-Cycles", cluster_weights),
+        weighted_cluster_sum(h2_tot, "Warm-Up Losses on H2 Production", cluster_weights),
         water_annual_usage,
     ]
 
@@ -199,7 +277,7 @@ def run_h2_PEM(
     H2_Results.update({"Water Hourly Consumption [kg/hr]": water_hourly_usage})
 
     if not debug_mode:
-        h2_ts, h2_tot = clean_up_final_outputs(h2_tot, h2_ts)
+        h2_ts, h2_tot = clean_up_final_outputs(h2_tot, h2_ts, cluster_weights)
 
     n_stacks_new = int(sum(np.isnan(h2_tot.loc["Stack Life [hours]"].to_list())))
 
@@ -208,7 +286,7 @@ def run_h2_PEM(
         unused_cluster_list = np.isnan(h2_tot.loc["Stack Life [hours]"].to_list())
         user_defined_pem_param_dictionary.setdefault("curve_coeff", None)
 
-        annual_eff_kWh_pr_kg = np.zeros((n_pem_clusters - n_stacks_new, int(useful_life)))
+        annual_eff_kWh_pr_kg = np.zeros((n_clusters_run - n_stacks_new, int(useful_life)))
         cluster_index = 0
         for is_unused, cluster in zip(
             unused_cluster_list, h2_tot.loc["Performance By Year"].index.to_list()
