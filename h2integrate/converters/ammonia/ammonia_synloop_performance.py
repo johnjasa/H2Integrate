@@ -282,7 +282,7 @@ class AmmoniaSynLoopPerformanceModel(ResizeablePerformanceModelBaseClass):
         # Purge gas as a multivariable stream output
         add_multivariable_output(self, "process_gas_mixture", self.n_timesteps)
 
-    def apply_dynamic_operation(self, inputs, nh3_production):
+    def apply_dynamic_operation(self, inputs, nh3_production, rated_capacity=None):
         """Apply ramping constraints and start-up delay losses to the ammonia production profile.
 
         Calls the model-agnostic helpers in :mod:`h2integrate.core.dynamics`. The
@@ -293,6 +293,13 @@ class AmmoniaSynLoopPerformanceModel(ResizeablePerformanceModelBaseClass):
         Args:
             inputs (dict-like): OM inputs to `compute()` method.
             nh3_production (np.ndarray): pre-constraint ammonia production profile.
+            rated_capacity (float, optional): plant capacity in kg NH3/hr that the
+                turndown and ramp limits are measured against. Defaults to the
+                ``ammonia_production_capacity`` input. `compute()` must pass the
+                resized capacity when a ``resize_by_*`` sizing mode is active,
+                otherwise a plant sized down to its feedstock is judged against
+                the original nameplate and is silently held below its own
+                turndown ratio, producing nothing.
 
         Returns:
             tuple:
@@ -303,7 +310,9 @@ class AmmoniaSynLoopPerformanceModel(ResizeablePerformanceModelBaseClass):
                   start-up delays (when ammonia output is zeroed) so the consumption
                   multiplier is taken *before* start-up losses are applied.
         """
-        rated_capacity = float(inputs["ammonia_production_capacity"][0])
+        if rated_capacity is None:
+            rated_capacity = inputs["ammonia_production_capacity"][0]
+        rated_capacity = float(np.asarray(rated_capacity).item())
 
         # raise warning if turndown_ratio is less than zero or greater than 1
         if not (0.0 <= inputs["turndown_ratio"][0] <= 1.0):
@@ -469,7 +478,9 @@ class AmmoniaSynLoopPerformanceModel(ResizeablePerformanceModelBaseClass):
         outputs["limiting_input"] = limiters
 
         # Apply dynamic operation
-        nh3_prod, consumption_multiplier = self.apply_dynamic_operation(inputs, nh3_prod)
+        nh3_prod, consumption_multiplier = self.apply_dynamic_operation(
+            inputs, nh3_prod, rated_capacity=nh3_cap
+        )
 
         # Calculate feedstocks used as consumption_multiplier*feedstock_rate
         used_h2 = consumption_multiplier * h2_rate

@@ -267,25 +267,33 @@ class NaturalGeoH2PerformanceModel(GeoH2SubsurfacePerformanceBaseClass):
             yearly_h2_cf.append(yearly_h2_produced / max_h2_produced)
 
         # Parse outputs
+        # `num_wells` identical wells produce in parallel. Concentrations and capacity
+        # factor are intensive (unchanged); flows and totals are extensive.
+        num_wells = float(np.asarray(inputs["num_wells"]).item())
+
         outputs["wellhead_h2_concentration_mass"] = w_h2 * 100
         outputs["wellhead_h2_concentration_mol"] = wh_h2_conc
-        outputs["lifetime_wellhead_flow"] = np.average(wh_flow_profile)
+        outputs["lifetime_wellhead_flow"] = np.average(wh_flow_profile) * num_wells
         # use lifetime average because H2I is unable to handle multiyear
         # commodity_out. Noted in issue #475.
-        outputs["wellhead_gas_out_natural"] = np.full(n_timesteps, np.average(wh_flow_profile))
-        outputs["wellhead_gas_out"] = np.full(n_timesteps, np.average(wh_flow_profile))
-        outputs["hydrogen_out"] = np.full(n_timesteps, np.average(h2_flow))
+        outputs["wellhead_gas_out_natural"] = (
+            np.full(n_timesteps, np.average(wh_flow_profile)) * num_wells
+        )
+        outputs["wellhead_gas_out"] = np.full(n_timesteps, np.average(wh_flow_profile)) * num_wells
+        outputs["hydrogen_out"] = np.full(n_timesteps, np.average(h2_flow)) * num_wells
 
-        outputs["max_wellhead_gas"] = ramp_up_flow
-        outputs["rated_hydrogen_production"] = ramp_up_flow * w_h2
+        outputs["max_wellhead_gas"] = ramp_up_flow * num_wells
+        outputs["rated_hydrogen_production"] = ramp_up_flow * w_h2 * num_wells
         # total is amount produced over simulation, which is a single year
         # for now so lifetime average is more accurate for model
-        outputs["total_wellhead_gas_produced"] = np.average(wh_flow_profile) * n_timesteps
-        outputs["total_hydrogen_produced"] = np.average(h2_flow) * n_timesteps
+        outputs["total_wellhead_gas_produced"] = (
+            np.average(wh_flow_profile) * n_timesteps * num_wells
+        )
+        outputs["total_hydrogen_produced"] = np.average(h2_flow) * n_timesteps * num_wells
 
         # output array of hydrogen produced and capacity factors
         # for each year of the simulation
-        outputs["annual_hydrogen_produced"] = yearly_h2
+        outputs["annual_hydrogen_produced"] = np.asarray(yearly_h2) * num_wells
         outputs["capacity_factor"] = yearly_h2_cf
 
     def arps_decline_curve_fit(self, t, qi, Di, b):

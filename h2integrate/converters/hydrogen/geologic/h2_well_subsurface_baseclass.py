@@ -35,6 +35,11 @@ class GeoH2SubsurfacePerformanceConfig(BaseConfig):
 
         grain_size (float):
             The grain size of the rocks used to extract hydrogen, in meters.
+
+        num_wells (int):
+            Number of identical wells in the field. All other parameters describe a
+            single well; extensive quantities (flow rates, total production) are
+            multiplied by this value. Defaults to 1.
     """
 
     borehole_depth: float = field()
@@ -42,6 +47,7 @@ class GeoH2SubsurfacePerformanceConfig(BaseConfig):
     well_geometry: str = field(validator=validators.in_(["vertical", "horizontal"]))
     rock_type: str = field(validator=validators.in_(["peridotite", "bei_troctolite"]))
     grain_size: float = field()
+    num_wells: int = field(default=1, converter=int, validator=validators.gt(0))
 
 
 class GeoH2SubsurfacePerformanceBaseClass(PerformanceModelBaseClass):
@@ -70,6 +76,10 @@ class GeoH2SubsurfacePerformanceBaseClass(PerformanceModelBaseClass):
 
         grain_size (float):
             The characteristic grain size of the rock formation, in meters.
+
+        num_wells (int):
+            Number of identical wells in the field. Extensive outputs are scaled by
+            this value; intensive outputs (concentrations, capacity factor) are not.
 
     Outputs:
         wellhead_gas_out (ndarray):
@@ -104,6 +114,12 @@ class GeoH2SubsurfacePerformanceBaseClass(PerformanceModelBaseClass):
         # inputs
         self.add_input("borehole_depth", units="m", val=self.config.borehole_depth)
         self.add_input("grain_size", units="m", val=self.config.grain_size)
+        self.add_input(
+            "num_wells",
+            units="unitless",
+            val=self.config.num_wells,
+            desc="Number of identical wells in the field",
+        )
 
         # outputs
         self.add_output("wellhead_gas_out", units="kg/h", shape=(self.n_timesteps,))
@@ -130,11 +146,17 @@ class GeoH2SubsurfaceCostConfig(CostModelBaseConfig):
             Structural configuration of the well.
             Valid options: `"vertical"` or `"horizontal"`.
 
+        num_wells (int):
+            Number of identical wells in the field. Per-well capital costs (test
+            drilling, permits, rights, completion) and fixed OpEx are multiplied by
+            this value. Variable OpEx already scales through the production it is
+            charged against. Defaults to 1.
     """
 
     borehole_depth: float = field()
     well_diameter: str = field(validator=validators.in_(["small", "large"]))
     well_geometry: str = field(validator=validators.in_(["vertical", "horizontal"]))
+    num_wells: int = field(default=1, converter=int, validator=validators.gt(0))
 
 
 class GeoH2SubsurfaceCostBaseClass(CostModelBaseClass):
@@ -185,6 +207,12 @@ class GeoH2SubsurfaceCostBaseClass(CostModelBaseClass):
 
         # inputs
         self.add_input("borehole_depth", units="m", val=self.config.borehole_depth)
+        self.add_input(
+            "num_wells",
+            units="unitless",
+            val=self.config.num_wells,
+            desc="Number of identical wells in the field",
+        )
         self.add_input(
             "wellhead_gas_out",
             shape=self.n_timesteps,

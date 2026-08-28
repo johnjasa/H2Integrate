@@ -1,5 +1,6 @@
 import copy
 
+import numpy as np
 from attrs import field, define, validators
 
 from h2integrate.core.utilities import merge_shared_inputs
@@ -193,6 +194,7 @@ class GeoH2SubsurfaceCostModel(GeoH2SubsurfaceCostBaseClass):
     def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
         # Get cost years
         cost_year = self.config.cost_year
+        num_wells = float(np.asarray(inputs["num_wells"]).item())
 
         # Calculate total capital cost per well (successful or unsuccessful)
         drill = inflate_cepci(inputs["test_drill_cost"], 2022, cost_year)
@@ -210,11 +212,16 @@ class GeoH2SubsurfaceCostModel(GeoH2SubsurfaceCostBaseClass):
                 completion, 2010, cost_year
             )  # Is this the correct base year?
         success = inputs["success_chance"]
-        bare_capex = cap_well / success * 100 + completion
+        # Every field parameter above describes one well, so the whole bare capital
+        # cost scales with the number of wells drilled.
+        bare_capex = (cap_well / success * 100 + completion) * num_wells
         outputs["bare_capital_cost"] = bare_capex
 
         # Parse in opex
-        fopex = inflate_cpi(inputs["fixed_opex"], 2022, cost_year)
+        # Fixed OpEx is charged per well. Variable OpEx is charged against
+        # total_wellhead_gas_produced, which the performance model has already
+        # scaled by num_wells, so it must not be multiplied again here.
+        fopex = inflate_cpi(inputs["fixed_opex"], 2022, cost_year) * num_wells
         vopex = inflate_cpi(inputs["variable_opex"], 2022, cost_year)
         outputs["OpEx"] = fopex
         outputs["VarOpEx"] = vopex * inputs["total_wellhead_gas_produced"]

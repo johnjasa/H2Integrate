@@ -137,7 +137,10 @@ class StimulatedGeoH2PerformanceModel(GeoH2SubsurfacePerformanceBaseClass):
         h2_produced = reacted_mass * M_H2 / M_Fe
 
         # Parse outputs
-        h2_prod_avg = h2_produced[-1] / lifetime / n_timesteps
+        # Each of `num_wells` identical well pairs reacts its own rock volume, so
+        # production scales linearly. Capacity factor is a ratio and is unaffected.
+        num_wells = float(np.asarray(inputs["num_wells"]).item())
+        h2_prod_avg = h2_produced[-1] / lifetime / n_timesteps * num_wells
         outputs["hydrogen_out_stim"] = h2_prod_avg
         outputs["hydrogen_out"] = h2_prod_avg
         # Until surface processing model is developed, wellhead gas = hydrogen
