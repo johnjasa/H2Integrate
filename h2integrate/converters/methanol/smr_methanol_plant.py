@@ -74,9 +74,9 @@ class SMRMethanolPlantPerformanceModel(MethanolPerformanceBaseClass):
         )
 
         # Set up feedstock consumption outputs
-        self.add_output("meoh_syn_cat_consume", units="ft**3/yr")
-        self.add_output("meoh_atr_cat_consume", units="ft**3/yr")
-        self.add_output("ng_consume", shape=self.n_timesteps, units="kg/h")
+        self.add_output("meoh_syn_cat_consumed", units="ft**3/yr")
+        self.add_output("meoh_atr_cat_consumed", units="ft**3/yr")
+        self.add_output("ng_consumed", shape=self.n_timesteps, units="kg/h")
 
         # Set up electricity production output
         self.add_output("electricity_out", shape=self.n_timesteps, units="kW*h/h")
@@ -103,9 +103,9 @@ class SMRMethanolPlantPerformanceModel(MethanolPerformanceBaseClass):
         elec_ratio = inputs["elec_produce_ratio"]
 
         # Parse outputs
-        outputs["meoh_syn_cat_consume"] = np.sum(meoh_prod) * syn_ratio
-        outputs["meoh_atr_cat_consume"] = np.sum(meoh_prod) * atr_ratio
-        outputs["ng_consume"] = meoh_prod * ng_ratio
+        outputs["meoh_syn_cat_consumed"] = np.sum(meoh_prod) * syn_ratio
+        outputs["meoh_atr_cat_consumed"] = np.sum(meoh_prod) * atr_ratio
+        outputs["ng_consumed"] = meoh_prod * ng_ratio
         outputs["methanol_out"] = meoh_prod
         outputs["total_methanol_produced"] = np.sum(meoh_prod)
         outputs["electricity_out"] = meoh_prod * elec_ratio
@@ -162,9 +162,9 @@ class SMRMethanolPlantCostModel(MethanolCostBaseClass):
         super().setup()
 
         self.add_input("ng_lhv", units="MJ/kg", val=self.config.ng_lhv)
-        self.add_input("meoh_syn_cat_consume", units="ft**3/yr")
-        self.add_input("meoh_atr_cat_consume", units="ft**3/yr")
-        self.add_input("ng_consume", shape=self.n_timesteps, units="kg/h")
+        self.add_input("meoh_syn_cat_consumed", units="ft**3/yr")
+        self.add_input("meoh_atr_cat_consumed", units="ft**3/yr")
+        self.add_input("ng_consumed", shape=self.n_timesteps, units="kg/h")
         self.add_input("electricity_out", shape=self.n_timesteps, units="kW*h/h")
         self.add_input("meoh_syn_cat_price", units="USD/ft**3", val=self.config.meoh_syn_cat_price)
         self.add_input("meoh_atr_cat_price", units="USD/ft**3", val=self.config.meoh_atr_cat_price)
@@ -189,11 +189,11 @@ class SMRMethanolPlantCostModel(MethanolCostBaseClass):
 
         outputs["Fixed_OpEx"] = foc_usd_y
         outputs["Variable_OpEx"] = voc_usd_y
-        meoh_cat = inputs["meoh_syn_cat_consume"] * inputs["meoh_syn_cat_price"]
+        meoh_cat = inputs["meoh_syn_cat_consumed"] * inputs["meoh_syn_cat_price"]
         outputs["meoh_syn_cat_cost"] = meoh_cat
-        atr_cat = inputs["meoh_atr_cat_consume"] * inputs["meoh_atr_cat_price"]
+        atr_cat = inputs["meoh_atr_cat_consumed"] * inputs["meoh_atr_cat_price"]
         outputs["meoh_atr_cat_cost"] = atr_cat
-        ng_cost = np.sum(inputs["ng_consume"]) * lhv_mmbtu * inputs["ng_price"]
+        ng_cost = np.sum(inputs["ng_consumed"]) * lhv_mmbtu * inputs["ng_price"]
         outputs["ng_cost"] = ng_cost
         elec_rev = np.sum(inputs["electricity_out"]) * ppa_price
         outputs["elec_revenue"] = elec_rev

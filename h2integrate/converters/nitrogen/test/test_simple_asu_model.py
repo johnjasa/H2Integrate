@@ -387,3 +387,111 @@ def test_simple_ASU_performance_and_cost_size_for_demand(plant_config, subtests)
             pytest.approx(prob.get_val("asu_cost.OpEx", units="USD/year")[0], rel=1e-6)
             == max_pwr_kw * opex_usd_per_mw / 1e3
         )
+
+
+@pytest.mark.unit
+def test_simple_ASU_rated_capacity_as_input(plant_config, subtests):
+    """Test that the rated capacity input can be overridden after setup."""
+    capex_usd_per_kg_pr_hr = 10.0
+    opex_usd_per_kg_pr_hr = 5.0
+    rated_N2_kg_pr_hr = 1000.0
+    efficiency_kWh_per_kg = 0.119
+    e_profile_in_kW = np.zeros(8760)
+
+    tech_config_dict = {
+        "model_inputs": {
+            "performance_parameters": {
+                "size_from_N2_demand": False,
+                "rated_N2_kg_pr_hr": rated_N2_kg_pr_hr,
+                "efficiency_kWh_pr_kg_N2": efficiency_kWh_per_kg,
+            },
+            "cost_parameters": {
+                "capex_usd_per_unit": capex_usd_per_kg_pr_hr,
+                "capex_unit": "kg/hour",
+                "opex_usd_per_unit_per_year": opex_usd_per_kg_pr_hr,
+                "opex_unit": "kg/hour",
+                "cost_year": 2022,
+            },
+        }
+    }
+
+    prob = om.Problem()
+    prob.model.add_subsystem(
+        "asu_perf",
+        SimpleASUPerformanceModel(
+            plant_config=plant_config,
+            tech_config=tech_config_dict,
+            driver_config={},
+        ),
+        promotes=["*"],
+    )
+    prob.model.add_subsystem(
+        "asu_cost",
+        SimpleASUCostModel(
+            plant_config=plant_config,
+            tech_config=tech_config_dict,
+            driver_config={},
+        ),
+        promotes=["*"],
+    )
+    prob.setup()
+
+    prob.set_val("electricity_in", e_profile_in_kW.tolist(), units="kW")
+    prob.run_model()
+
+    with subtests.test("default capacity comes from the config"):
+        assert prob.get_val("rated_N2_kg_pr_hr", units="kg/h")[0] == rated_N2_kg_pr_hr
+
+    base_rated_production = prob.get_val("rated_nitrogen_production", units="kg/h")[0]
+    base_capacity_kW = prob.get_val("ASU_capacity_kW", units="kW")[0]
+    base_capex = prob.get_val("CapEx", units="USD")[0]
+    base_opex = prob.get_val("OpEx", units="USD/year")[0]
+
+    prob.set_val("rated_N2_kg_pr_hr", 2 * rated_N2_kg_pr_hr, units="kg/h")
+    prob.run_model()
+
+    with subtests.test("rated_nitrogen_production doubles"):
+        assert (
+            pytest.approx(prob.get_val("rated_nitrogen_production", units="kg/h")[0], rel=1e-6)
+            == 2 * base_rated_production
+        )
+
+    with subtests.test("ASU_capacity_kW doubles"):
+        assert (
+            pytest.approx(prob.get_val("ASU_capacity_kW", units="kW")[0], rel=1e-6)
+            == 2 * base_capacity_kW
+        )
+
+    with subtests.test("CapEx doubles"):
+        assert pytest.approx(prob.get_val("CapEx", units="USD")[0], rel=1e-6) == 2 * base_capex
+
+    with subtests.test("OpEx doubles"):
+        assert pytest.approx(prob.get_val("OpEx", units="USD/year")[0], rel=1e-6) == 2 * base_opex
+
+
+@pytest.mark.unit
+def test_simple_ASU_inconsistent_capacities_raise(plant_config):
+    """Test that inconsistent capacity inputs raise an error during setup."""
+    rated_N2_kg_pr_hr = 1000.0
+    tech_config_dict = {
+        "model_inputs": {
+            "performance_parameters": {
+                "size_from_N2_demand": False,
+                "rated_N2_kg_pr_hr": rated_N2_kg_pr_hr,
+                "ASU_rated_power_kW": rated_N2_kg_pr_hr * 0.29,
+                "efficiency_kWh_pr_kg_N2": 0.119,
+            },
+        }
+    }
+
+    prob = om.Problem()
+    prob.model.add_subsystem(
+        "asu_perf",
+        SimpleASUPerformanceModel(
+            plant_config=plant_config,
+            tech_config=tech_config_dict,
+            driver_config={},
+        ),
+    )
+    with pytest.raises(ValueError, match="does not match the ASU efficiency"):
+        prob.setup()

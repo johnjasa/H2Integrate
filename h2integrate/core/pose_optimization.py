@@ -106,6 +106,38 @@ class PoseOptimization:
 
         return opt_prob
 
+    def _get_autoscaler(self, autoscaler_name):
+        """Return an OpenMDAO autoscaler instance for the requested name.
+
+        Autoscalers are set on the driver and therefore work with any optimization
+        driver (Scipy, pyOptSparse, GA, etc.), not just gradient-based ones.
+
+        Args:
+            autoscaler_name (str): Name of the autoscaler requested in the driver
+                config. Supported values are ``"bounds"`` (normalize each design
+                variable to the interval [0, 1] using its bounds) and
+                ``"none"``/``"default"`` (use the driver's default, user-declared
+                ``ref``/``ref0``/``scaler``/``adder`` scaling).
+
+        Raises:
+            ValueError: The requested autoscaler is not supported.
+
+        Returns:
+            Autoscaler: An OpenMDAO autoscaler instance.
+        """
+        autoscalers = {
+            "bounds": om.BoundsAutoscaler,
+            "none": om.Autoscaler,
+            "default": om.Autoscaler,
+        }
+        key = str(autoscaler_name).lower()
+        if key not in autoscalers:
+            raise ValueError(
+                f"Autoscaler '{autoscaler_name}' is not supported. "
+                f"Supported options are {sorted(autoscalers)}."
+            )
+        return autoscalers[key]()
+
     def set_driver(self, opt_prob):
         """set which optimization driver to use and set options
 
@@ -265,6 +297,12 @@ class PoseOptimization:
 
             else:
                 raise ValueError(f"Optimizer {opt_options['solver']} is not yet supported.")
+
+            # Optionally override how the driver scales design variables. Because
+            # the autoscaler lives on the base Driver, this works for every
+            # optimization driver, not just the Scipy/SLSQP-style ones.
+            if opt_options.get("autoscaler") is not None:
+                opt_prob.driver.autoscaler = self._get_autoscaler(opt_options["autoscaler"])
 
             if opt_options["debug_print"]:
                 opt_prob.driver.options["debug_print"] = [

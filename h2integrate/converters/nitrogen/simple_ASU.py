@@ -85,6 +85,13 @@ class SimpleASUPerformanceModel(PerformanceModelBaseClass):
         self.commodity_rate_units = "kg/h"
 
     def setup(self):
+        """Declare the model's inputs and outputs.
+
+        Raises:
+            ValueError: if user provided ASU capacities in kg-N2/hour and kW and
+                these values do not result in the same efficiency as
+                ``efficiency_kWh_pr_kg_N2``.
+        """
         super().setup()
 
         self.config = SimpleASUPerformanceConfig.from_dict(
@@ -98,6 +105,39 @@ class SimpleASUPerformanceModel(PerformanceModelBaseClass):
         else:
             self.add_input("electricity_in", val=0.0, shape=self.n_timesteps, units="kW")
 
+            # Resolve the default sizing basis from the config. Either capacity may be
+            # given; if both are given they must imply the model's efficiency.
+            if self.config.rated_N2_kg_pr_hr is None:
+                # calculate capacity in kg-N2/hour based on user-provided capacity in kW
+                default_rated_N2_kg_pr_hr = (
+                    self.config.ASU_rated_power_kW / self.config.efficiency_kWh_pr_kg_N2
+                )
+            else:
+                default_rated_N2_kg_pr_hr = self.config.rated_N2_kg_pr_hr
+                if self.config.ASU_rated_power_kW is not None:
+                    # check that user-provided capacities in kg-N2/hour and kW result
+                    # in the same efficiency
+                    implied_efficiency = self.config.ASU_rated_power_kW / default_rated_N2_kg_pr_hr
+                    if not np.isclose(implied_efficiency, self.config.efficiency_kWh_pr_kg_N2):
+                        msg = (
+                            f"User defined size for ASU system "
+                            f"({self.config.ASU_rated_power_kW} kg N2/hour at "
+                            f"{default_rated_N2_kg_pr_hr} kW) has an efficiency of "
+                            f"{implied_efficiency} kWh/kg-N2, this does not "
+                            f"match the ASU efficiency of {self.config.efficiency_kWh_pr_kg_N2}"
+                        )
+                        raise ValueError(msg)
+
+            self.add_input(
+                "rated_N2_kg_pr_hr",
+                val=default_rated_N2_kg_pr_hr,
+                units="kg/h",
+                desc=(
+                    "Rated ASU capacity. Defaults to the config value; expose as a "
+                    "design variable to size the ASU inside an optimization."
+                ),
+            )
+
         self.add_output("air_in", val=0.0, shape=self.n_timesteps, units="kg/h")
         self.add_output("ASU_capacity_kW", val=0.0, units="kW", desc="ASU rated capacity in kW")
 
@@ -106,6 +146,14 @@ class SimpleASUPerformanceModel(PerformanceModelBaseClass):
             val=0.0,
             units="kW",
             desc="ASU annual electricity consumption in kWh/year",
+        )
+
+        self.add_output(
+            "electricity_consumed",
+            val=0.0,
+            shape=self.n_timesteps,
+            units="kW",
+            desc="Hourly electricity consumed by the ASU",
         )
 
         self.add_output("oxygen_out", val=0.0, shape=self.n_timesteps, units="kg/h")
@@ -118,10 +166,6 @@ class SimpleASUPerformanceModel(PerformanceModelBaseClass):
         Args:
             inputs (dict): input variables/parameters
             outputs (dict: output variables/parameters
-
-        Raises:
-            ValueError: if user provided ASU capacities in kg-N2/hour and kW and
-                these values do not result in the same efficiency as `efficiency_kWh_pr_kg_N2`.
         """
 
         if self.config.size_from_N2_demand:
@@ -130,42 +174,9 @@ class SimpleASUPerformanceModel(PerformanceModelBaseClass):
             n2_profile_in_kg = inputs["nitrogen_in"]
             ASU_rated_power_kW = rated_N2_kg_pr_hr * self.config.efficiency_kWh_pr_kg_N2
         else:
+            rated_N2_kg_pr_hr = inputs["rated_N2_kg_pr_hr"][0]
+            ASU_rated_power_kW = rated_N2_kg_pr_hr * self.config.efficiency_kWh_pr_kg_N2
             n2_profile_in_kg = inputs["electricity_in"] / self.config.efficiency_kWh_pr_kg_N2
-            provided_kW_not_kg = (
-                self.config.ASU_rated_power_kW is not None and self.config.rated_N2_kg_pr_hr is None
-            )
-            provided_kg_not_kW = (
-                self.config.ASU_rated_power_kW is None and self.config.rated_N2_kg_pr_hr is not None
-            )
-            provided_both = (
-                self.config.ASU_rated_power_kW is not None
-                and self.config.rated_N2_kg_pr_hr is not None
-            )
-            if provided_kW_not_kg:
-                # calculate capacity in kg-N2/hour based on user-provided capacity in kW
-                rated_N2_kg_pr_hr = (
-                    self.config.ASU_rated_power_kW / self.config.efficiency_kWh_pr_kg_N2
-                )
-                ASU_rated_power_kW = self.config.ASU_rated_power_kW
-            if provided_kg_not_kW:
-                # calculate capacity in kW based on user-provided capacity in kg-N2/hour
-                rated_N2_kg_pr_hr = self.config.rated_N2_kg_pr_hr
-                ASU_rated_power_kW = (
-                    self.config.rated_N2_kg_pr_hr * self.config.efficiency_kWh_pr_kg_N2
-                )
-            if provided_both:
-                # check that user-provided capacities in kg-N2/hour and kW result
-                # in the same efficiency
-                rated_N2_kg_pr_hr = self.config.rated_N2_kg_pr_hr
-                ASU_rated_power_kW = self.config.ASU_rated_power_kW
-                if ASU_rated_power_kW / rated_N2_kg_pr_hr != self.config.efficiency_kWh_pr_kg_N2:
-                    msg = (
-                        f"User defined size for ASU system ({ASU_rated_power_kW} kg N2/hour at "
-                        f"{rated_N2_kg_pr_hr} kW) has an efficiency of "
-                        f"{ASU_rated_power_kW/rated_N2_kg_pr_hr} kWh/kg-N2, this does not "
-                        f"match the ASU efficiency of {self.config.efficiency_kWh_pr_kg_N2}"
-                    )
-                    raise ValueError(msg)
 
         # calculate the molar mass of air
         air_molar_mass = (
@@ -216,6 +227,8 @@ class SimpleASUPerformanceModel(PerformanceModelBaseClass):
         )
         # annual electricity consumption in kWh/year
         outputs["annual_electricity_consumption"] = sum(electricity_kWh)
+        # hourly electricity actually drawn, for feedstock cost models
+        outputs["electricity_consumed"] = electricity_kWh
 
         if self.config.size_from_N2_demand:
             # electricity feedstock profile required to produce N2
