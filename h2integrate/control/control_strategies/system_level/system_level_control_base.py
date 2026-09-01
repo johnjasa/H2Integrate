@@ -81,6 +81,70 @@ def _get_buy_price_default_and_shape(tech_config, tech_name, n_timesteps, plant_
     return 0.0, n_timesteps
 
 
+def _get_tech_sell_price_input_name(tech_config, tech_name):
+    """Return the variable name of a tech's sell-price input, or ``None`` if absent.
+
+    Mirror of :func:`_get_tech_buy_price_input_name` for the export side. Used
+    by export-aware controllers (e.g. ``LPArbitrageControl``) to locate the
+    OpenMDAO input on the export technology's cost model that carries the
+    per-unit sale price. Currently recognizes ``"electricity_sell_price"``
+    (Grid technologies).
+
+    Args:
+        tech_config (dict): The full ``tech_config`` dictionary.
+        tech_name (str): Name of the technology.
+
+    Returns:
+        str | None: The input variable name, or ``None`` if the tech has no
+        recognized sell-price input in its cost / shared parameters.
+    """
+    tech_def = tech_config.get("technologies", {}).get(tech_name, {})
+    model_inputs = tech_def.get("model_inputs", {})
+    cost_params = model_inputs.get("cost_parameters", {})
+    shared_params = model_inputs.get("shared_parameters", {})
+    all_params = {**shared_params, **cost_params}
+    if "electricity_sell_price" in all_params:
+        return "electricity_sell_price"
+    return None
+
+
+def _get_sell_price_default_and_shape(tech_config, tech_name, n_timesteps, plant_life):
+    """Return the default sell-price value and OpenMDAO input shape for a tech.
+
+    Mirror of :func:`_get_buy_price_default_and_shape` for the export side, so
+    a controller's ``{tech_name}_sell_price`` input can be safely connected
+    input-to-input with the export technology's own sell-price input. The shape
+    is determined by ``sell_price_mode`` (``per_timestep`` -> ``n_timesteps``,
+    ``per_year`` -> ``plant_life``, ``constant`` -> ``1``).
+
+    Args:
+        tech_config (dict): The full ``tech_config`` dictionary.
+        tech_name (str): Name of the technology.
+        n_timesteps (int): Number of simulation timesteps.
+        plant_life (int): Plant life in years.
+
+    Returns:
+        tuple[float | list | np.ndarray, int]: ``(default_value, shape)``
+        suitable for ``add_input(val=..., shape=...)``.
+    """
+    tech_def = tech_config.get("technologies", {}).get(tech_name, {})
+    model_inputs = tech_def.get("model_inputs", {})
+    cost_params = model_inputs.get("cost_parameters", {})
+    shared_params = model_inputs.get("shared_parameters", {})
+    all_params = {**shared_params, **cost_params}
+
+    if "electricity_sell_price" in all_params:
+        default_price = all_params["electricity_sell_price"]
+        sell_price_mode = all_params.get("sell_price_mode", "per_timestep")
+        if sell_price_mode == "per_year":
+            return default_price, plant_life
+        if sell_price_mode == "constant":
+            return default_price, 1
+        return default_price, n_timesteps
+
+    return 0.0, n_timesteps
+
+
 class SystemLevelControlBase(om.ExplicitComponent):
     """Base class for system-level controllers.
 

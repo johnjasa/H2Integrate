@@ -1,0 +1,9 @@
+name: H2Integrate_config
+system_summary: >
+  Merchant solar plus battery plant in west Texas that arbitrages an hourly
+  locational marginal price series. A rolling-horizon linear program at the
+  system level co-optimizes battery charge/discharge, grid imports, and grid
+  exports.
+driver_config: driver_config.yaml
+plant_config: plant_config.yaml
+technology_config: tech_config.yaml

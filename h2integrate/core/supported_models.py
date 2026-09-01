@@ -196,6 +196,7 @@ supported_models = _ModelRegistry(
         "DemandFollowingControl": "control.control_strategies.system_level.demand_following_control:DemandFollowingControl",
         "CostMinimizationControl": "control.control_strategies.system_level.cost_minimization_control:CostMinimizationControl",
         "ProfitMaximizationControl": "control.control_strategies.system_level.profit_maximization_control:ProfitMaximizationControl",
+        "LPArbitrageControl": "control.control_strategies.system_level.lp_arbitrage_control:LPArbitrageControl",
     }
 )
 

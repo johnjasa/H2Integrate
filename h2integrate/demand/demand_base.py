@@ -178,10 +178,15 @@ class DemandComponentBase(PerformanceModelBaseClass):
             outputs[f"total_{self.commodity}_produced"] / self.fraction_of_year_simulated
         )
 
-        outputs["capacity_factor"] = outputs[f"{self.commodity}_out"].sum() / commodity_demand.sum()
-
         total_demand = commodity_demand.sum()
         total_gen = commodity_in.sum()
+
+        # A merchant plant has no on-site load, so guard the zero-demand case.
+        if total_demand > 0:
+            outputs["capacity_factor"] = outputs[f"{self.commodity}_out"].sum() / total_demand
+        else:
+            outputs["capacity_factor"] = 0.0
+
         if total_demand > 0:
             outputs["percent_load_missed"] = (
                 100.0 * outputs[f"unmet_{self.commodity}_demand_out"].sum() / total_demand

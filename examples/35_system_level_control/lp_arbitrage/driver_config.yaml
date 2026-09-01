@@ -1,0 +1,4 @@
+name: driver_config
+description: LP-based energy arbitrage for a merchant solar plus battery plant
+general:
+  folder_output: outputs

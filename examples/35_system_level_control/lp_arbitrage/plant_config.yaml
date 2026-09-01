@@ -1,0 +1,92 @@
+name: plant_config
+description: >
+  Merchant solar plus battery plant with LP-based energy arbitrage against an
+  hourly locational marginal price series. There is no on-site load: the demand
+  component is set to zero so that all production flows through its
+  ``unused_electricity_out`` port to the export grid connection.
+sites:
+  site:
+    latitude: 30.6617
+    longitude: -101.7096
+    resources:
+      solar_resource:
+        resource_model: OpenMeteoHistoricalSolarResource
+        resource_parameters:
+          resource_year: 2013
+technology_interconnections:
+  # Source bus: solar and grid imports are aggregated into a single stream.
+  # Routing the import technology through this combiner is what physically
+  # enables grid charging, because the storage model clips charging to the
+  # commodity present at its input.
+  - [solar, charge_combiner, electricity, cable]
+  - [grid_buy, charge_combiner, electricity, cable]
+  # The aggregated source feeds the battery and also flows straight through to
+  # the delivery bus. A combiner is the only technology allowed to fan out to
+  # both a storage component and a downstream combiner.
+  - [charge_combiner, battery, electricity, cable]
+  - [charge_combiner, out_combiner, electricity, cable]
+  # Delivery bus: the battery's net output is negative while charging, which
+  # cancels the charging draw taken from the source bus.
+  - [battery, out_combiner, electricity, cable]
+  - [out_combiner, electrical_load_demand, electricity, cable]
+  # Export path: everything the (zero) load does not consume is sold.
+  - [electrical_load_demand, grid_sell, [unused_electricity_out, electricity_set_point]]
+  - [electrical_load_demand, grid_sell, [unused_electricity_out, electricity_in]]
+resource_to_tech_connections:
+  - [site.solar_resource, solar, solar_resource_data]
+plant:
+  plant_life: 30
+  simulation:
+    n_timesteps: 8760
+    dt: 3600
+system_level_control:
+  control_strategy: LPArbitrageControl
+  demand_component: electrical_load_demand
+  export_component: grid_sell
+  control_parameters:
+    n_control_window_hours: 24
+    cost_per_tech:
+      grid_buy: buy_price  # marginal cost of an import is the hourly LMP
+    storage_cycle_cost: 0.001  # $/kWh throughput; breaks ties between schedules
+    terminal_soc_price_factor: 1.0
+    value_of_lost_load: 10.0
+    solver_name: glpk
+  solver_options:
+    solver_name: gauss_seidel
+    max_iter: 30
+    convergence_tolerance: 1.0e-6
+    solver_option_kwargs:
+      use_aitken: true
+finance_parameters:
+  finance_groups:
+    profast_lco:
+      finance_model: ProFastLCO
+      model_inputs:
+        params:
+          analysis_start_year: 2032
+          installation_time: 24  # months
+          inflation_rate: 0.0  # 0 for nominal analysis
+          discount_rate: 0.09
+          debt_equity_ratio: 2.62
+          property_tax_and_insurance: 0.03
+          total_income_tax_rate: 0.257
+          capital_gains_tax_rate: 0.15
+          sales_tax_rate: 0.07375
+          debt_interest_rate: 0.07
+          debt_type: Revolving debt
+          loan_period_if_used: 0
+          cash_onhand_months: 1
+          admin_expense: 0.00
+        capital_items:
+          depr_type: MACRS
+          depr_period: 5
+          refurb: [0.]
+  finance_subgroups:
+    electricity:
+      commodity: electricity
+      commodity_stream: out_combiner
+      finance_groups: [profast_lco]
+      technologies: [solar, battery, grid_buy, grid_sell]
+  cost_adjustment_parameters:
+    cost_year_adjustment_inflation: 0.025
+    target_dollar_year: 2022

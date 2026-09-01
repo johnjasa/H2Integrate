@@ -21,6 +21,7 @@ from h2integrate.control.control_strategies.system_level.solver_options import (
 )
 from h2integrate.control.control_strategies.system_level.system_level_control_base import (
     _get_tech_buy_price_input_name,
+    _get_tech_sell_price_input_name,
 )
 
 
@@ -506,6 +507,12 @@ class H2IntegrateModel:
                   to its ``_control_classifier`` (one of ``"fixed"``, ``"flexible"``,
                   ``"dispatchable"``, ``"storage"``, ``"feedstock"``). Determines how
                   the SLC interacts with each tech.
+                - ``"export_tech"`` (str | None): Name of the technology that sells
+                  surplus commodity, taken from
+                  ``system_level_control["export_component"]``. Export technologies sit
+                  *downstream* of the demand component (they are fed by
+                  ``unused_{commodity}_out``) and so are not part of
+                  ``tech_to_commodity``. ``None`` when no export component is configured.
         """
         slc_topology = {}
         technologies = self.technology_config.get("technologies", {})
@@ -631,6 +638,18 @@ class H2IntegrateModel:
         slc_topology["demand_commodity_rate_units"] = all_params.get("commodity_rate_units", None)
 
         slc_topology["tech_control_classifiers"] = upstream_tech_control_classifiers
+
+        # Export technology (optional). It is fed by the demand component's
+        # unused commodity output, so it is downstream of the demand and is not
+        # picked up by the upstream classification above.
+        export_tech = self.plant_config["system_level_control"].get("export_component", None)
+        if export_tech is not None and export_tech not in technologies:
+            msg = (
+                f"Export technology specified for system level controller, ``{export_tech}``, "
+                "not defined in the tech configuration file."
+            )
+            raise ValueError(msg)
+        slc_topology["export_tech"] = export_tech
 
         return slc_topology
 
@@ -807,7 +826,11 @@ class H2IntegrateModel:
             )
 
         # --- Step 4: Connect marginal-cost inputs (cost-aware strategies) -
-        if strategy_name in ("CostMinimizationControl", "ProfitMaximizationControl"):
+        if strategy_name in (
+            "CostMinimizationControl",
+            "ProfitMaximizationControl",
+            "LPArbitrageControl",
+        ):
             cost_per_tech = plant_slc_config.get("control_parameters", {}).get("cost_per_tech", {})
             technology_graph = slc_topology["technology_graph"]
             for tech_name, _ in slc_topology["tech_to_commodity"]:
@@ -861,6 +884,21 @@ class H2IntegrateModel:
             f"{demand_tech}.{demand_commodity}_demand_out",
             f"system_level_controller.{demand_commodity}_demand",
         )
+
+        # --- Step 6: Connect the export sale price to the controller -------
+        # Export-aware strategies price their export decision off the export
+        # technology's own sell price, so the controller and the cost model
+        # always agree on the value of a sold unit. This is an input-to-input
+        # connection (OpenMDAO 3.44+), made on the top-level model, matching the
+        # ``buy_price`` handling in Step 4.
+        export_tech = slc_topology.get("export_tech", None)
+        if export_tech is not None:
+            sell_price_input = _get_tech_sell_price_input_name(self.technology_config, export_tech)
+            if sell_price_input is not None:
+                self.model.connect(
+                    f"{export_tech}.{sell_price_input}",
+                    f"system_level_controller.{export_tech}_sell_price",
+                )
 
     def create_technology_models(self):
         # Loop through each technology and instantiate an OpenMDAO object (assume it exists)

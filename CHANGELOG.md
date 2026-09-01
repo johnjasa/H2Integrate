@@ -17,6 +17,10 @@
 - Exempted demand components from the tech interconnections checking, added unit test. [PR 850](https://github.com/NatLabRockies/H2Integrate/pull/850)
 - Added extra capex, opex, and varopex outputs to `GenericConverterCostModel` for increased cost model flexibility for additional costs that don't scale based on capacity, energy throughput, or commodity throughput. [PR 849](https://github.com/NatLabRockies/H2Integrate/pull/849)
 - Updated tech, plant, and driver schemas to better reflect the current state of the codebase and to improve validation. [PR 849](https://github.com/NatLabRockies/H2Integrate/pull/849)
+- Added `LPArbitrageControl`, a system-level controller that solves a rolling-horizon linear program to co-optimize storage, dispatchable technologies, and grid export against a time-varying sale price. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
+  - Added an `export_component` key to the system-level control configuration so the controller can read the sale price and interconnection limit from a downstream export technology.
+  - Fixed a divide-by-zero in `DemandComponentBase` that produced a NaN capacity factor when the demand profile is zero, which prevented merchant plants with no on-site load from converging.
+  - Added example 35 `lp_arbitrage`, a merchant solar plus battery plant that arbitrages a synthetic hourly locational marginal price series.
 
 ## 0.9 [August 10, 2026]
 
