@@ -118,6 +118,45 @@ class LPArbitrageControl(SystemLevelControlBase):
     ``plant_config["system_level_control"]["control_parameters"]``. The export
     technology is named by ``plant_config["system_level_control"]["export_component"]``
     and its ``electricity_sell_price`` supplies the price series.
+
+    **Generalization TODOs**
+
+    This formulation was written against a solar-plus-battery electricity
+    arbitrage plant, and several deliberate simplifications follow from that
+    scope. They are collected here so the work needed to support other storage
+    or dispatchable technologies is visible in one place. Individual methods
+    carry the corresponding detail.
+
+    TODO: Generalize to multiple commodities. The linear program builds a single
+    balance constraint on ``self.commodity``, so a plant that stores hydrogen
+    and sells electricity, or that runs a converter linking two buses, cannot be
+    represented. Supporting that means indexing the balance, export, and
+    curtailment variables by commodity and adding conversion constraints that
+    couple them.
+
+    TODO: Generalize to a single export technology per commodity. The objective
+    values all sales at one price through one interconnection. Plants that sell
+    into several markets, or that face separate import and export nodes with
+    different prices, need one export variable and price series per sales point.
+
+    TODO: Generalize the storage model. See :meth:`_read_storage_parameters` and
+    :meth:`_build_lp_model` for the specific assumptions (lossless standby,
+    symmetric efficiency split, static sizing, no ramp or minimum-power limits)
+    that hold for a lithium-ion battery but not for hydrogen, thermal, or
+    pumped-hydro storage.
+
+    TODO: Generalize the dispatchable model. Every dispatchable technology is
+    assumed to be continuously adjustable between zero and rated production at
+    a linear marginal cost. Thermal units, electrolyzers, and industrial loads
+    generally have minimum stable operating points, start-up costs, and minimum
+    up and down times, none of which a linear program can express. See
+    :meth:`_build_lp_model`.
+
+    TODO: Generalize the treatment of flexible technologies. They are pinned to
+    must-run parameters because the wind and solar performance models ignore
+    their command value. A flexible technology that does honor a set-point
+    should instead become a bounded decision variable so the optimizer can
+    curtail it directly. See :meth:`compute`.
     """
 
     # Retries for transient solver-interface faults (see _solve_window).
@@ -204,6 +243,18 @@ class LPArbitrageControl(SystemLevelControlBase):
     def _read_export_limit(self):
         """Return the export technology's interconnection size.
 
+        TODO: Generalize beyond a single scalar limit. This assumes one export
+        technology whose capability is one constant number, which fits a grid
+        interconnection agreement. A pipeline, a truck fleet, or a contracted
+        offtake schedule would need a time-varying limit, and a plant with more
+        than one sales point would need one limit per point.
+
+        TODO: Generalize the parameter name. ``interconnection_size`` is
+        electricity-specific. Storage or transport technologies for other
+        commodities name their capability differently, so this lookup should be
+        driven by the technology's declared capacity parameter rather than a
+        hard-coded key.
+
         Returns:
             float: Maximum export rate in ``commodity_rate_units``.
 
@@ -227,6 +278,30 @@ class LPArbitrageControl(SystemLevelControlBase):
 
     def _read_storage_parameters(self):
         """Read storage sizing, efficiency, and state-of-charge bounds from config.
+
+        TODO: Generalize the efficiency split. When only ``round_trip_efficiency``
+        is given it is divided evenly between charging and discharging via a
+        square root. That is a reasonable convention for a battery, but a
+        hydrogen system whose electrolyzer and fuel cell have very different
+        efficiencies, or a thermal store whose losses are dominated by one
+        direction, will be misrepresented. Prefer explicit ``charge_efficiency``
+        and ``discharge_efficiency``, and allow them to vary with state of
+        charge or power level.
+
+        TODO: Generalize static sizing. Capacity and power limits are read from
+        the technology configuration rather than from connected inputs, because
+        connected values are still zero on the first solver iteration. This
+        breaks if storage is sized by a design variable or an upstream sizing
+        model. Reading the connected inputs once they are populated, and
+        rebuilding the variable bounds when they change, would remove the
+        restriction.
+
+        TODO: Capture the state-dependent parameters other storage technologies
+        need. There is no self-discharge or boil-off rate, no standby power, no
+        minimum charge or discharge power, no ramp limit, and no pressure or
+        temperature state. A lithium-ion battery over hourly timesteps tolerates
+        all of those omissions; compressed hydrogen, liquid hydrogen, and
+        thermal storage generally do not.
 
         Returns:
             dict[str, dict]: Per-technology parameter dictionaries for every
@@ -296,6 +371,43 @@ class LPArbitrageControl(SystemLevelControlBase):
         The model is constructed once and re-solved for every window with
         updated mutable parameters, which avoids rebuilding Pyomo objects
         thousands of times over the course of a nonlinear solver loop.
+
+        TODO: Generalize the balance constraint past one commodity. ``balance``
+        treats the plant as a single lumped bus carrying ``self.commodity``.
+        Storing a different commodity than the one that is sold, or placing a
+        converter between two buses, requires one balance constraint per
+        commodity plus conversion terms linking them.
+
+        TODO: Generalize ``charge_availability``. It bounds total charging by
+        the commodity present on that same lumped bus, mirroring the
+        ``charge_available`` clip inside the storage performance model. It
+        therefore assumes every source can physically reach every storage
+        technology. A plant where only part of the generation is routed to a
+        given store needs the constraint written per storage technology over its
+        actual upstream connections.
+
+        TODO: Generalize the storage dynamics in ``soc_balance``. The state of
+        charge evolves only through commanded charge and discharge at constant
+        efficiency. Self-discharge, boil-off, standby loads, ramp limits, and
+        efficiency that varies with power or state of charge would each add
+        terms here, and the last of those is nonlinear unless it is
+        piecewise-linearized.
+
+        TODO: Generalize ``rated_limit`` for dispatchable technologies with
+        commitment behavior. Output is bounded only from above by a single rated
+        value, so any unit is free to sit anywhere between zero and rated in
+        every timestep. Minimum stable generation, start-up and shutdown costs,
+        and minimum up and down times all require binary commitment variables,
+        which turns this into a mixed-integer program and rules out the
+        continuous solvers assumed by ``solver_name``.
+
+        TODO: Revisit simultaneous charge and discharge if the objective gains
+        terms that can make it profitable. The linear relaxation permits it, and
+        it is currently ruled out only because it is never optimal when prices
+        and ``storage_cycle_cost`` are such that cycling costs money. Negative
+        prices combined with ancillary-service revenue could break that, and
+        forbidding it needs a binary variable per storage technology per
+        timestep.
 
         Returns:
             pyo.ConcreteModel: The window-scale optimization model.
@@ -479,6 +591,36 @@ class LPArbitrageControl(SystemLevelControlBase):
         return np.broadcast_to(price, self.n_timesteps).copy()
 
     def compute(self, inputs, outputs):
+        """Solve the rolling-horizon program and emit one set-point per technology.
+
+        TODO: Generalize the must-run treatment of flexible technologies. Their
+        measured output is copied into the ``must_run`` parameter and their
+        set-points are pinned to rated production, because the wind and solar
+        performance models are resource-driven and ignore
+        ``{commodity}_command_value``. A flexible technology that does respond
+        to its set-point should become a decision variable bounded by available
+        resource so the optimizer curtails it explicitly instead of routing the
+        surplus through the ``curtail`` slack.
+
+        TODO: Generalize the terminal state-of-charge valuation. Energy left in
+        storage at a window boundary is priced at the mean price over that
+        window scaled by discharge efficiency. This is a heuristic that works
+        when the price series is roughly cyclic over the window, which holds for
+        a daily or weekly electricity market. Storage that cycles seasonally, or
+        that serves a commodity with a trending price, needs a value function
+        derived from a longer horizon.
+
+        TODO: Revisit the result cache if any technology becomes truly
+        set-point-responsive. The cache assumes the schedule is a pure function
+        of the recorded inputs and that they stop changing once the fixed-point
+        loop has passed through the resource-driven technologies. A dispatchable
+        technology whose availability depends on its own past set-points would
+        invalidate that assumption.
+
+        Args:
+            inputs (Vector): OpenMDAO inputs vector.
+            outputs (Vector): OpenMDAO outputs vector.
+        """
         commodity = self.commodity
         n_timesteps = self.n_timesteps
         window_len = self.window_len
