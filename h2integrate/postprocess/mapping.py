@@ -17,12 +17,13 @@ from h2integrate.postprocess.sql_to_csv import convert_sql_to_csv_summary
 try:
     import geopandas as gpd
     import contextily as ctx
+    from adjustText import adjust_text
 
     ctx.tile.USER_AGENT = "NLR H2Integrate"
 
 except ImportError as exc:
     msg = (
-        "Failed to import geopandas or contextily. "
+        "Failed to import geopandas, contextily, or adjustText. "
         "H2Integrate must be installed with the `gis` or `examples` modifier"
     )
     raise ImportError(msg) from exc
@@ -156,6 +157,17 @@ class GeospatialMapConfig(BaseConfig):
         label_format_string (str, optional): A string used to format the label text for each point.
         legend_label (str, optional): A string used to set the legend label text when plotting
             non-numeric data. Defaults to 'UPDATE LEGEND LABEL'.
+        avoid_label_overlap (bool, optional): A boolean to automatically nudge overlapping point
+            labels apart using the adjustText package, drawing a thin connector line back to the
+            point when a label is moved. When False, labels are placed at the fixed
+            label_offset_x / label_offset_y offsets and may overlap. Defaults to True.
+        label_connector_props (dict, optional): A dict of matplotlib arrowprops used to style the
+            connector line drawn between a moved label and its point (only used when
+            avoid_label_overlap is True). Defaults to {'arrowstyle': '-', 'color': 'black',
+            'lw': 0.5}.
+        adjust_text_kwargs (dict, optional): A dict of extra keyword arguments passed directly to
+            adjustText.adjust_text() (e.g. force_text, expand) for fine-tuning label placement.
+            Only used when avoid_label_overlap is True. Defaults to {}.
     """
 
     lat_long_crs: str = field(default="EPSG:4326")
@@ -216,6 +228,9 @@ class GeospatialMapConfig(BaseConfig):
     label_offset_y: list[float] = field(default=[0])
     label_format_string: str = field(default=".3f")
     legend_label: str = field(default="UPDATE LEGEND LABEL")
+    avoid_label_overlap: bool = field(default=True)
+    label_connector_props: dict = field(default={"arrowstyle": "-", "color": "black", "lw": 0.5})
+    adjust_text_kwargs: dict = field(factory=dict)
 
 
 def plot_geospatial_point_heat_map(
@@ -417,22 +432,39 @@ def plot_geospatial_point_heat_map(
 
     # Plot data labels
     if len(map_preferences.label_format_string) > 0:
+        texts = []
         for idx, result in results_gdf.iterrows():
             labeltext = f"{result[metric_to_plot]:{map_preferences.label_format_string}}"
-            ax.annotate(
-                text=labeltext,
-                xy=(result.geometry.x, result.geometry.y),
-                xytext=(
-                    map_preferences.label_offset_x[idx],
-                    map_preferences.label_offset_y[idx],
-                ),
-                textcoords="offset points",
-                fontsize=map_preferences.colorbar_tick_label_font_size,
-                # backgroundcolor="white",
-                zorder=map_preferences.zorder - 1,
-                horizontalalignment=map_preferences.horz_alignment[idx],
-                verticalalignment=map_preferences.vert_alignment[idx],
-            )
+            if map_preferences.avoid_label_overlap:
+                # Start at the point itself; adjust_text() repositions it and draws a
+                # connector line back to (x, y) if it ends up moved.
+                text = ax.text(
+                    result.geometry.x,
+                    result.geometry.y,
+                    labeltext,
+                    fontsize=map_preferences.colorbar_tick_label_font_size,
+                    zorder=map_preferences.zorder - 1,
+                    horizontalalignment=map_preferences.horz_alignment[idx],
+                    verticalalignment=map_preferences.vert_alignment[idx],
+                )
+                texts.append(text)
+            else:
+                ax.annotate(
+                    text=labeltext,
+                    xy=(result.geometry.x, result.geometry.y),
+                    xytext=(
+                        map_preferences.label_offset_x[idx],
+                        map_preferences.label_offset_y[idx],
+                    ),
+                    textcoords="offset points",
+                    fontsize=map_preferences.colorbar_tick_label_font_size,
+                    # backgroundcolor="white",
+                    zorder=map_preferences.zorder - 1,
+                    horizontalalignment=map_preferences.horz_alignment[idx],
+                    verticalalignment=map_preferences.vert_alignment[idx],
+                )
+    else:
+        texts = []
 
     # If data is text, just plot a single color for all points,
     # otherwise plot the heat map with colormap
@@ -541,6 +573,17 @@ def plot_geospatial_point_heat_map(
     ax.set_ylim(coord_range_dict["min_y"] - lower_pad, coord_range_dict["max_y"] + upper_pad)
     ax.set_axis_off()
     ax.set_title(map_preferences.figure_title)
+
+    # Adjust labels after the final axes limits are known, so overlap/bounds checks are accurate
+    if map_preferences.avoid_label_overlap and texts:
+        adjust_text(
+            texts,
+            x=results_gdf.geometry.x.to_numpy(),
+            y=results_gdf.geometry.y.to_numpy(),
+            ax=ax,
+            arrowprops=map_preferences.label_connector_props,
+            **map_preferences.adjust_text_kwargs,
+        )
 
     ctx.add_basemap(
         ax,
