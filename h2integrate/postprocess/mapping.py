@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import matplotlib.lines as mlines
 import matplotlib.pyplot as plt
 from attrs import field, define, converters, validators
 from xyzservices import TileProvider
@@ -155,6 +156,10 @@ class GeospatialMapConfig(BaseConfig):
             for each point plotted. Must be the same length as the number of points or
             single-element list to use same alignment for all labels. Defaults to [3].
         label_format_string (str, optional): A string used to format the label text for each point.
+        label_bbox (dict | None, optional): A dict of matplotlib FancyBboxPatch properties (e.g.
+            facecolor, edgecolor, boxstyle) passed to ax.annotate() to draw a background box
+            behind each point label, useful for making labels stand out against the basemap.
+            Defaults to None (no background box).
         legend_label (str, optional): A string used to set the legend label text when plotting
             non-numeric data. Defaults to 'UPDATE LEGEND LABEL'.
         avoid_label_overlap (bool, optional): A boolean to automatically nudge overlapping point
@@ -227,6 +232,7 @@ class GeospatialMapConfig(BaseConfig):
     label_offset_x: list[float] = field(default=[0])
     label_offset_y: list[float] = field(default=[0])
     label_format_string: str = field(default=".3f")
+    label_bbox: dict | None = field(default=None)
     legend_label: str = field(default="UPDATE LEGEND LABEL")
     avoid_label_overlap: bool = field(default=True)
     label_connector_props: dict = field(default={"arrowstyle": "-", "color": "black", "lw": 0.5})
@@ -417,6 +423,12 @@ def plot_geospatial_point_heat_map(
         base_layer_gdf = validate_gdfs_are_same_crs(base_layer_gdf, results_gdf)
         gdfs_for_bounds.extend(base_layer_gdf)
 
+    # Proxy marker handles accumulated across layers, stored on the axes so the legend keeps
+    # showing the correct marker/color per layer regardless of what else has been drawn on it
+    # (e.g. adjustText's unlabeled connector-line patches, which matplotlib's implicit
+    # get_legend_handles_labels() would otherwise pick up and misalign with leg_texts).
+    leg_handles = getattr(ax, "_geospatial_legend_handles", [])
+
     # Determine appropriate lower and upper bounds for the colormap and legend
     if map_preferences.colorbar_limits is None and results_gdf[metric_to_plot].dtype in (
         np.float64,
@@ -443,6 +455,7 @@ def plot_geospatial_point_heat_map(
                     result.geometry.y,
                     labeltext,
                     fontsize=map_preferences.colorbar_tick_label_font_size,
+                    bbox=map_preferences.label_bbox,
                     zorder=map_preferences.zorder - 1,
                     horizontalalignment=map_preferences.horz_alignment[idx],
                     verticalalignment=map_preferences.vert_alignment[idx],
@@ -458,7 +471,7 @@ def plot_geospatial_point_heat_map(
                     ),
                     textcoords="offset points",
                     fontsize=map_preferences.colorbar_tick_label_font_size,
-                    # backgroundcolor="white",
+                    bbox=map_preferences.label_bbox,
                     zorder=map_preferences.zorder - 1,
                     horizontalalignment=map_preferences.horz_alignment[idx],
                     verticalalignment=map_preferences.vert_alignment[idx],
@@ -498,7 +511,22 @@ def plot_geospatial_point_heat_map(
         or map_preferences.legend_label is not None
     ):
         leg_texts.append(map_preferences.legend_label)
+        # geopandas/scatter markersize is a point area, while Line2D markersize is a linear point
+        # diameter, so take the square root to keep the legend marker sizes visually proportional.
+        leg_handles.append(
+            mlines.Line2D(
+                [0],
+                [0],
+                linestyle="None",
+                marker=map_preferences.marker,
+                markerfacecolor=map_preferences.markerfacecolor,
+                markeredgecolor=map_preferences.edgecolor,
+                markersize=max(6.0, map_preferences.markersize**0.5),
+            )
+        )
+        ax._geospatial_legend_handles = leg_handles
         plt.legend(
+            leg_handles,
             leg_texts,
             title=map_preferences.colorbar_label,
             frameon=True,
