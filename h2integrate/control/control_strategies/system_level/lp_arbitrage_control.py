@@ -6,7 +6,6 @@ from pyomo.common.errors import ApplicationError
 from h2integrate.core.utilities import BaseConfig, merge_shared_inputs
 from h2integrate.control.control_strategies.system_level.system_level_control_base import (
     SystemLevelControlBase,
-    _get_sell_price_default_and_shape,
 )
 
 
@@ -144,7 +143,7 @@ class LPArbitrageControl(SystemLevelControlBase):
     Configuration is read from
     ``plant_config["system_level_control"]["control_parameters"]``. The export
     technology is named by ``plant_config["system_level_control"]["export_component"]``
-    and its ``electricity_sell_price`` supplies the price series.
+    and its ``{commodity}_sell_price`` input or output supplies the price series.
 
     **Generalization TODOs**
 
@@ -198,7 +197,6 @@ class LPArbitrageControl(SystemLevelControlBase):
             additional_cls_name=self.__class__.__name__,
         )
 
-        self.plant_life = int(plant_config["plant"]["plant_life"])
         self.dt_h = plant_config["plant"]["simulation"]["dt"] / 3600.0
 
         # --- Export technology: supplies both the price series and the limit ---
@@ -213,19 +211,7 @@ class LPArbitrageControl(SystemLevelControlBase):
                 "``unused_{commodity}_out``)."
             )
 
-        default_price, price_shape = _get_sell_price_default_and_shape(
-            self.options["tech_config"],
-            self.export_tech,
-            self.n_timesteps,
-            self.plant_life,
-        )
-        self.add_input(
-            f"{self.export_tech}_sell_price",
-            val=default_price,
-            shape=price_shape,
-            units=f"USD/({self.commodity_rate_units}*h)",
-            desc=f"Sale price of {self.commodity} exported through {self.export_tech}",
-        )
+        self._add_price_input(self.export_tech, "sell")
 
         self.export_limit = self._read_export_limit()
 
@@ -704,24 +690,6 @@ class LPArbitrageControl(SystemLevelControlBase):
     # Runtime
     # ------------------------------------------------------------------
 
-    def _broadcast_price(self, price):
-        """Expand a price input of any supported shape to one value per timestep.
-
-        Args:
-            price (np.ndarray): Raw price input, of shape ``(n_timesteps,)``,
-                ``(plant_life,)``, or ``(1,)``.
-
-        Returns:
-            np.ndarray: Price array of shape ``(n_timesteps,)``.
-        """
-        price = np.asarray(price, dtype=float)
-        if price.shape == (self.n_timesteps,):
-            return price
-        if price.shape == (self.plant_life,):
-            # Per-year price: the first year represents operating conditions.
-            return np.full(self.n_timesteps, price[0])
-        return np.broadcast_to(price, self.n_timesteps).copy()
-
     def compute(self, inputs, outputs):
         """Solve the rolling-horizon program and emit one set-point per technology.
 
@@ -751,7 +719,7 @@ class LPArbitrageControl(SystemLevelControlBase):
         commit_len = self.commit_len
 
         demand = np.asarray(inputs[self.demand_input_name], dtype=float)
-        sell_price = self._broadcast_price(inputs[f"{self.export_tech}_sell_price"])
+        sell_price = np.asarray(inputs[f"{self.export_tech}_sell_price"], dtype=float)
 
         # Must-run production: fixed techs plus resource-driven flexible techs.
         must_run = np.zeros(n_timesteps)

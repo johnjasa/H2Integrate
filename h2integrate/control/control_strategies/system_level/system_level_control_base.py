@@ -3,146 +3,55 @@ import networkx as nx
 import openmdao.api as om
 
 
-def _get_tech_buy_price_input_name(tech_config, tech_name):
-    """Return the variable name of a tech's buy-price input, or ``None`` if absent.
-
-    Used by the ``"buy_price"`` ``cost_per_tech`` mode to figure out which
-    OpenMDAO input on the technology cost model carries the per-unit purchase
-    price. Currently recognizes:
-
-    - ``"electricity_buy_price"`` (Grid technologies)
-    - ``"price"`` (Feedstock technologies)
+def price_src_indices(n_values, n_timesteps, plant_life):
+    """Return the source indices that map a price onto one value per timestep.
 
     Args:
-        tech_config (dict): The full ``tech_config`` dictionary.
-        tech_name (str): Name of the technology.
-
-    Returns:
-        str | None: The input variable name, or ``None`` if the tech has no
-        recognized buy-price input in its cost / shared parameters.
-    """
-    tech_def = tech_config.get("technologies", {}).get(tech_name, {})
-    model_inputs = tech_def.get("model_inputs", {})
-    cost_params = model_inputs.get("cost_parameters", {})
-    shared_params = model_inputs.get("shared_parameters", {})
-    all_params = {**shared_params, **cost_params}
-    if "electricity_buy_price" in all_params:
-        return "electricity_buy_price"
-    if "price" in all_params:
-        return "price"
-    return None
-
-
-def _get_buy_price_default_and_shape(tech_config, tech_name, n_timesteps, plant_life):
-    """Return the default buy-price value and OpenMDAO input shape for a tech.
-
-    Mirrors the shape logic used by the technology cost models themselves so
-    the SLC's ``{tech_name}_buy_price`` input can be safely connected
-    input-to-input with the tech's own buy-price input:
-
-    - Grid (``electricity_buy_price``): shape is determined by
-      ``buy_price_mode`` (``per_timestep`` → ``n_timesteps``, ``per_year`` →
-      ``plant_life``, ``constant`` → ``1``).
-    - Feedstock (``price``): shape is the length of the configured price
-      array, or ``1`` for a scalar.
-    - Anything else: falls back to ``n_timesteps`` with a default of ``0.0``.
-
-    Args:
-        tech_config (dict): The full ``tech_config`` dictionary.
-        tech_name (str): Name of the technology.
+        n_values (int): Number of values in the price.
         n_timesteps (int): Number of simulation timesteps.
         plant_life (int): Plant life in years.
 
     Returns:
-        tuple[float | list | np.ndarray, int]: ``(default_value, shape)``
-        suitable for ``add_input(val=..., shape=...)``.
+        np.ndarray | None: ``None`` for a per-timestep price. Otherwise indices
+        that repeat the first value, which is the whole price for a scalar and
+        the first year for a per-year price.
+
+    Raises:
+        ValueError: If the price is not scalar, per-timestep, or per-year.
     """
-    tech_def = tech_config.get("technologies", {}).get(tech_name, {})
-    model_inputs = tech_def.get("model_inputs", {})
-    cost_params = model_inputs.get("cost_parameters", {})
-    shared_params = model_inputs.get("shared_parameters", {})
-    all_params = {**shared_params, **cost_params}
-
-    if "electricity_buy_price" in all_params:
-        default_price = all_params["electricity_buy_price"]
-        buy_price_mode = all_params.get("buy_price_mode", "per_timestep")
-        if buy_price_mode == "per_year":
-            return default_price, plant_life
-        if buy_price_mode == "constant":
-            return default_price, 1
-        return default_price, n_timesteps
-
-    if "price" in all_params:
-        default_price = all_params["price"]
-        if isinstance(default_price, list | np.ndarray):
-            return default_price, len(default_price)
-        return default_price, 1
-
-    return 0.0, n_timesteps
+    if n_values == n_timesteps:
+        return None
+    if n_values in (1, plant_life):
+        return np.zeros(n_timesteps, dtype=int)
+    raise ValueError(
+        f"Expected a scalar, per-timestep ({n_timesteps}), or per-year ({plant_life}) "
+        f"price, but got {n_values} values."
+    )
 
 
-def _get_tech_sell_price_input_name(tech_config, tech_name):
-    """Return the variable name of a tech's sell-price input, or ``None`` if absent.
-
-    Mirror of :func:`_get_tech_buy_price_input_name` for the export side. Used
-    by export-aware controllers (e.g. ``LPArbitrageControl``) to locate the
-    OpenMDAO input on the export technology's cost model that carries the
-    per-unit sale price. Currently recognizes ``"electricity_sell_price"``
-    (Grid technologies).
+def _configured_price(tech_config, tech_name, price_names, n_timesteps, plant_life):
+    """Return a technology's configured price as one value per timestep.
 
     Args:
         tech_config (dict): The full ``tech_config`` dictionary.
         tech_name (str): Name of the technology.
-
-    Returns:
-        str | None: The input variable name, or ``None`` if the tech has no
-        recognized sell-price input in its cost / shared parameters.
-    """
-    tech_def = tech_config.get("technologies", {}).get(tech_name, {})
-    model_inputs = tech_def.get("model_inputs", {})
-    cost_params = model_inputs.get("cost_parameters", {})
-    shared_params = model_inputs.get("shared_parameters", {})
-    all_params = {**shared_params, **cost_params}
-    if "electricity_sell_price" in all_params:
-        return "electricity_sell_price"
-    return None
-
-
-def _get_sell_price_default_and_shape(tech_config, tech_name, n_timesteps, plant_life):
-    """Return the default sell-price value and OpenMDAO input shape for a tech.
-
-    Mirror of :func:`_get_buy_price_default_and_shape` for the export side, so
-    a controller's ``{tech_name}_sell_price`` input can be safely connected
-    input-to-input with the export technology's own sell-price input. The shape
-    is determined by ``sell_price_mode`` (``per_timestep`` -> ``n_timesteps``,
-    ``per_year`` -> ``plant_life``, ``constant`` -> ``1``).
-
-    Args:
-        tech_config (dict): The full ``tech_config`` dictionary.
-        tech_name (str): Name of the technology.
+        price_names (list[str]): Price parameter names to look for, in order.
         n_timesteps (int): Number of simulation timesteps.
         plant_life (int): Plant life in years.
 
     Returns:
-        tuple[float | list | np.ndarray, int]: ``(default_value, shape)``
-        suitable for ``add_input(val=..., shape=...)``.
+        np.ndarray: Price of shape ``(n_timesteps,)``, or zeros if the
+        technology config sets none of ``price_names``.
     """
-    tech_def = tech_config.get("technologies", {}).get(tech_name, {})
-    model_inputs = tech_def.get("model_inputs", {})
-    cost_params = model_inputs.get("cost_parameters", {})
-    shared_params = model_inputs.get("shared_parameters", {})
-    all_params = {**shared_params, **cost_params}
-
-    if "electricity_sell_price" in all_params:
-        default_price = all_params["electricity_sell_price"]
-        sell_price_mode = all_params.get("sell_price_mode", "per_timestep")
-        if sell_price_mode == "per_year":
-            return default_price, plant_life
-        if sell_price_mode == "constant":
-            return default_price, 1
-        return default_price, n_timesteps
-
-    return 0.0, n_timesteps
+    model_inputs = tech_config.get("technologies", {}).get(tech_name, {}).get("model_inputs", {})
+    params = {
+        **model_inputs.get("shared_parameters", {}),
+        **model_inputs.get("cost_parameters", {}),
+    }
+    price = next((params[name] for name in price_names if params.get(name) is not None), 0.0)
+    price = np.atleast_1d(np.asarray(price, dtype=float))
+    src_indices = price_src_indices(price.size, n_timesteps, plant_life)
+    return price if src_indices is None else price[src_indices]
 
 
 class SystemLevelControlBase(om.ExplicitComponent):
@@ -214,6 +123,10 @@ class SystemLevelControlBase(om.ExplicitComponent):
         slc_topology = self.options["slc_topology"]
 
         self.n_timesteps = plant_config["plant"]["simulation"]["n_timesteps"]
+        self.plant_life = int(plant_config["plant"]["plant_life"])
+
+        # {input_name: (tech_name, price_names)}, connected by SLCRootGroup.configure
+        self.price_inputs = {}
 
         # Read pre-computed classification from plant_config
         self.commodity = slc_topology["demand_commodity"]
@@ -656,6 +569,46 @@ class SystemLevelControlBase(om.ExplicitComponent):
 
         return tech_commodities
 
+    def _add_price_input(self, tech_name, side):
+        """Add a ``{tech_name}_{side}_price`` input fed by the technology's own price.
+
+        The technology is assumed to expose its price as ``{commodity}_{side}_price``
+        (for example ``electricity_sell_price`` or ``hydrogen_buy_price``), where
+        ``commodity`` is the controlled commodity. A buy price may also be a
+        feedstock ``price``. That variable may be an input or an output of the
+        technology, and may be scalar, per-timestep, or per-year.
+        ``SLCRootGroup`` connects it once the technology is set up. If the
+        technology has no such variable, the input keeps the price from the
+        technology config, or zero.
+
+        Args:
+            tech_name (str): Technology that buys or sells the commodity.
+            side (str): ``"buy"`` or ``"sell"``.
+
+        Returns:
+            str: Name of the new input, which has shape ``(n_timesteps,)``.
+        """
+        price_names = [f"{self.commodity}_{side}_price"]
+        if side == "buy":
+            price_names.append("price")
+
+        input_name = f"{tech_name}_{side}_price"
+        self.add_input(
+            input_name,
+            val=_configured_price(
+                self.options["tech_config"],
+                tech_name,
+                price_names,
+                self.n_timesteps,
+                self.plant_life,
+            ),
+            shape=self.n_timesteps,
+            units=f"USD/({self.commodity_rate_units}*h)",
+            desc=f"Price to {side} {self.commodity} through {tech_name}",
+        )
+        self.price_inputs[input_name] = (tech_name, price_names)
+        return input_name
+
     # ------------------------------------------------------------------
     # Marginal-cost helpers for cost-aware controllers
     # ------------------------------------------------------------------
@@ -673,11 +626,9 @@ class SystemLevelControlBase(om.ExplicitComponent):
         - Numeric value (e.g. ``0.05``): used directly as a constant
           marginal cost in ``USD/(commodity_rate_unit*h)``. No additional
           inputs or connections are required.
-        - ``"buy_price"``: creates a ``{tech_name}_buy_price`` input
-          whose default value is read from the technology's cost config
-          (``electricity_buy_price`` for Grid, ``price`` for Feedstock).
-          Can be scalar or time-varying and may be overridden at runtime
-          via ``prob.set_val()``.
+        - ``"buy_price"``: creates a ``{tech_name}_buy_price`` input fed by
+          the technology's ``{commodity}_buy_price`` (or feedstock ``price``),
+          whether that is an input or an output. See ``_add_price_input``.
         - ``"VarOpEx"``: creates a ``{tech_name}_VarOpEx`` input
           connected to the cost model's ``VarOpEx`` output. The
           per-unit marginal cost is computed at run time by dividing
@@ -697,7 +648,6 @@ class SystemLevelControlBase(om.ExplicitComponent):
         self.dt_hours = self.options["plant_config"]["plant"]["simulation"]["dt"] / 3600
         hours_simulated = self.dt_hours * self.n_timesteps
         self.fraction_of_year_simulated = hours_simulated / 8760
-        plant_life = int(self.options["plant_config"]["plant"]["plant_life"])
 
         self.dispatchable_marginal_cost_types = []
 
@@ -708,32 +658,14 @@ class SystemLevelControlBase(om.ExplicitComponent):
                 self.dispatchable_marginal_cost_types.append(("scalar", cost_spec))
 
             elif cost_spec == "buy_price":
-                # Read default buy price from tech config and create an input on
-                # the SLC whose shape matches the tech's own buy-price input.
-                # That allows ``H2IntegrateModel`` to wire the tech's buy-price
-                # input directly to this SLC input (input-to-input connection),
-                # so a single ``prob.set_val()`` on the tech propagates here.
-                default_price, input_shape = _get_buy_price_default_and_shape(
-                    self.options["tech_config"],
-                    tech_name,
-                    self.n_timesteps,
-                    plant_life,
-                )
-
-                self.add_input(
-                    f"{tech_name}_buy_price",
-                    val=default_price,
-                    shape=input_shape,
-                    units=f"USD/({self.commodity_rate_units}*h)",
-                    desc=f"Buy price for {tech_name}",
-                )
+                self._add_price_input(tech_name, "buy")
                 self.dispatchable_marginal_cost_types.append(("buy_price", tech_name))
 
             elif cost_spec == "VarOpEx":
                 self.add_input(
                     f"{tech_name}_VarOpEx",
                     val=0.0,
-                    shape=plant_life,
+                    shape=self.plant_life,
                     units="USD/year",
                     desc=f"Variable operating expenditure from {tech_name}",
                 )
@@ -752,7 +684,7 @@ class SystemLevelControlBase(om.ExplicitComponent):
                     self.add_input(
                         f"{feedstock_name}_VarOpEx",
                         val=0.0,
-                        shape=plant_life,
+                        shape=self.plant_life,
                         units="USD/year",
                         desc=f"Variable operating expenditure from feedstock {feedstock_name}",
                     )
@@ -792,25 +724,8 @@ class SystemLevelControlBase(om.ExplicitComponent):
         return marginal_costs
 
     def _buy_price_marginal_cost(self, inputs, tech_name):
-        """Compute marginal cost from buy price.
-
-        Returns a per-timestep marginal cost array equal to the
-        technology's buy price. The underlying input may be scalar
-        (shape ``(1,)``), per-timestep (shape ``(n_timesteps,)``) or
-        per-year (shape ``(plant_life,)``); the value is broadcast or
-        repeated as needed to span all simulation timesteps.
-        """
-        buy_price = np.asarray(inputs[f"{tech_name}_buy_price"])
-
-        if buy_price.shape == (self.n_timesteps,) or buy_price.shape == (1,):
-            return np.broadcast_to(buy_price, self.n_timesteps).copy()
-
-        if buy_price.shape == (int(self.options["plant_config"]["plant"]["plant_life"]),):
-            # Per-year price: use the first year's value as a representative
-            # per-timestep marginal cost for dispatch decisions.
-            return np.full(self.n_timesteps, buy_price[0])
-
-        return np.broadcast_to(buy_price, self.n_timesteps).copy()
+        """Return the technology's per-timestep buy price as its marginal cost."""
+        return np.array(inputs[f"{tech_name}_buy_price"], dtype=float)
 
     def _varopex_marginal_cost(self, inputs, tech_name):
         """Compute marginal cost from VarOpEx and commodity output.

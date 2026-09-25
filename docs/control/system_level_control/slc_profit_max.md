@@ -82,7 +82,7 @@ Marginal costs are configured identically to the {ref}`cost minimization control
 | Value | Description |
 | --- | --- |
 | Numeric (e.g. `0.05`) | Constant marginal cost in `$/(commodity_amount_units)` |
-| `"buy_price"` | Uses the technology's configured purchase price |
+| `"buy_price"` | Uses the technology's `{commodity}_buy_price` (or feedstock `price`), which may be an input or an output of the technology |
 | `"VarOpEx"` | Derives cost from VarOpEx / total production |
 | `"feedstock"` | Sums upstream feedstock VarOpEx / total production |
 

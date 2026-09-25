@@ -38,7 +38,7 @@ technology_interconnections:
   # Export path: everything the (zero) load does not consume is sold.
   - [electrical_load_demand, grid_sell, [unused_electricity_out, electricity_set_point]]
   - [electrical_load_demand, grid_sell, [unused_electricity_out, electricity_in]]
-resource_to_tech_connections:
+site_to_tech_connections:
   - [site.solar_resource, existing_solar, solar_resource_data]
 plant:
   plant_life: 30

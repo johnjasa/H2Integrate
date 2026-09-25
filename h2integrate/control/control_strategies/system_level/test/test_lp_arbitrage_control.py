@@ -95,6 +95,116 @@ def test_lp_arbitrage_setup(subtests, temp_copy_of_example):
         assert params["discharge_efficiency"] == pytest.approx(np.sqrt(0.88))
 
 
+CUSTOM_GRID_MODELS = """
+from h2integrate.converters.grid.grid import GridCostModel
+
+
+class GridSellPriceOutput(GridCostModel):
+    def setup(self):
+        super().setup()
+        self.add_output(
+            "electricity_sell_price", val=0.07, shape=self.n_timesteps, units="USD/(kW*h)"
+        )
+
+
+class GridSellPriceInput(GridCostModel):
+    def setup(self):
+        super().setup()
+        self.add_input(
+            "electricity_sell_price", val=0.07, shape=self.n_timesteps, units="USD/(kW*h)"
+        )
+
+
+class GridPriceOutputs(GridCostModel):
+    def setup(self):
+        super().setup()
+        self.add_output(
+            "electricity_buy_price", val=0.05, shape=self.n_timesteps, units="USD/(MW*h)"
+        )
+        self.add_output("electricity_sell_price", val=0.07, units="USD/(kW*h)")
+"""
+
+
+def _use_unpriced_grid_sell(example_folder, cost_model="GridCostModel"):
+    """Drop the configured sell price and optionally swap in a custom grid cost model."""
+    (example_folder / "custom_grid.py").write_text(CUSTOM_GRID_MODELS)
+    config_path = example_folder / "tech_config.yaml"
+    text = config_path.read_text()
+    text = text.replace(
+        "        electricity_sell_price: 0.03  # $/kWh; overridden with an LMP series in the run "
+        "script\n",
+        "",
+    )
+    if cost_model != "GridCostModel":
+        text = text.replace(
+            "  grid_sell:\n    performance_model:\n      model: GridPerformanceModel\n"
+            "    cost_model:\n      model: GridCostModel\n",
+            "  grid_sell:\n    performance_model:\n      model: GridPerformanceModel\n"
+            f"    cost_model:\n      model: {cost_model}\n      model_location: custom_grid.py\n",
+        )
+    config_path.write_text(text)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("example_folder,resource_example_folder", [(EXAMPLE, None)])
+@pytest.mark.parametrize("cost_model", ["GridSellPriceOutput", "GridSellPriceInput"])
+def test_lp_arbitrage_sell_price_from_custom_model(temp_copy_of_example, cost_model):
+    """A custom export model's sell price reaches the controller without a configured price."""
+    _use_unpriced_grid_sell(temp_copy_of_example, cost_model)
+    model = H2IntegrateModel(temp_copy_of_example / "solar_battery_arbitrage.yaml")
+    model.setup()
+    model.prob.final_setup()
+
+    source = model.prob.model.get_source("system_level_controller.grid_sell_sell_price")
+    assert source == model.prob.model.get_source("grid_sell.electricity_sell_price")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("example_folder,resource_example_folder", [(EXAMPLE, None)])
+def test_lp_arbitrage_sell_price_missing_warns(temp_copy_of_example):
+    """An export technology without any sell price leaves the controller default in place."""
+    _use_unpriced_grid_sell(temp_copy_of_example)
+    model = H2IntegrateModel(temp_copy_of_example / "solar_battery_arbitrage.yaml")
+    with pytest.warns(UserWarning, match="'grid_sell_sell_price' is not connected"):
+        model.setup()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("example_folder,resource_example_folder", [(EXAMPLE, None)])
+def test_lp_arbitrage_prices_from_custom_grid(subtests, temp_copy_of_example):
+    """Computed buy and sell prices of any supported shape reach the controller."""
+    _use_unpriced_grid_sell(temp_copy_of_example, "GridPriceOutputs")
+    config_path = temp_copy_of_example / "tech_config.yaml"
+    text = config_path.read_text()
+    text = text.replace(
+        "        electricity_buy_price: 0.03  # $/kWh; overridden with an LMP series in the run "
+        "script\n",
+        "",
+    )
+    text = text.replace(
+        "  grid_buy:\n    performance_model:\n      model: GridPerformanceModel\n"
+        "    cost_model:\n      model: GridCostModel\n",
+        "  grid_buy:\n    performance_model:\n      model: GridPerformanceModel\n"
+        "    cost_model:\n      model: GridPriceOutputs\n      model_location: custom_grid.py\n",
+    )
+    config_path.write_text(text)
+
+    model = H2IntegrateModel(temp_copy_of_example / "solar_battery_arbitrage.yaml")
+    model.setup()
+    model.prob.final_setup()
+    om_model = model.prob.model
+
+    with subtests.test("Buy price is connected"):
+        assert om_model.get_source("system_level_controller.grid_buy_buy_price") == (
+            om_model.get_source("grid_buy.electricity_buy_price")
+        )
+
+    with subtests.test("Scalar sell price is connected"):
+        assert om_model.get_source("system_level_controller.grid_sell_sell_price") == (
+            om_model.get_source("grid_sell.electricity_sell_price")
+        )
+
+
 @requires_glpk
 @pytest.mark.unit
 @pytest.mark.parametrize("example_folder,resource_example_folder", [(EXAMPLE, None)])

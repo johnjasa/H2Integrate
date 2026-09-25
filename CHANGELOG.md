@@ -28,6 +28,7 @@
   - Connected the controller's storage capacity and rate limits to the storage models' own inputs so a design variable or parameter sweep resizes the plant and the optimization bounds together.
   - Added example 35 `lp_arbitrage`, a merchant battery added to an existing solar plant that arbitrages a synthetic hourly locational marginal price series, with a parameter sweep over battery energy capacity that traces `ProFastNPV` net present value and reports the dispatch and economics of the best capacity.
   - Made `overwrite_recorder` delete the existing recorder database instead of leaving it in place, which previously made a second run with the same recorder filename fail during setup.
+  - System-level controller buy and sell prices now connect automatically to a technology's `{commodity}_buy_price` or `{commodity}_sell_price`, whether it is an input or an output and whether it is scalar, per-timestep, or per-year.
 - Fixed some units in the resource models (`C` converted to `degC`, etc) and refactored inheritance of baseclasses for existing resource models [PR 858](https://github.com/NatLabRockies/H2Integrate/pull/858)
 - Add resource models that can extract resource data from NLR resource datasets using the `rex` package [PR 854](https://github.com/NatLabRockies/H2Integrate/pull/854)
   - `WTKHRRRMETDatasetH5` to access data from the WTK HRRR MET dataset

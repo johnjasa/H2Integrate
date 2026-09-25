@@ -26,12 +26,9 @@ from h2integrate.postprocess.reporting import (
 )
 from h2integrate.core.commodity_stream_definitions import multivariable_streams
 from h2integrate.control.control_strategies.passthrough_controller import PassthroughController
+from h2integrate.control.control_strategies.system_level.slc_root_group import SLCRootGroup
 from h2integrate.control.control_strategies.system_level.solver_options import (
     SLCSolverOptionsConfig,
-)
-from h2integrate.control.control_strategies.system_level.system_level_control_base import (
-    _get_tech_buy_price_input_name,
-    _get_tech_sell_price_input_name,
 )
 
 
@@ -66,7 +63,8 @@ class H2IntegrateModel:
 
         # Check if create_om_reports is specified in driver config
         create_om_reports = self.driver_config.get("general", {}).get("create_om_reports", True)
-        self.prob = om.Problem(reports=create_om_reports)
+        model = SLCRootGroup() if self.slc else om.Group()
+        self.prob = om.Problem(model=model, reports=create_om_reports)
         self.model = self.prob.model
 
         # initialize recorder_path attribute
@@ -454,10 +452,8 @@ class H2IntegrateModel:
         control strategy, and finance parameters.
         """
 
-        plant_group = om.Group()
-
         # Create the plant model group and add components
-        self.plant = self.model.add_subsystem("plant", plant_group, promotes=["*"])
+        self.plant = self.model.add_subsystem("plant", om.Group(), promotes=["*"])
 
     def _classify_slc_technologies(self):
         """Classify technologies for system-level control.
@@ -714,10 +710,8 @@ class H2IntegrateModel:
              This is consistent with the ``_find_feedstock_techs`` method
              used by the controller component internally.
            - ``"buy_price"``: the controller's ``{tech_name}_buy_price`` input is
-             connected input-to-input to the technology's own buy-price input
-             (``electricity_buy_price`` for Grid, ``price`` for Feedstock) so a
-             single ``prob.set_val()`` on the tech propagates to the SLC. The
-             default value still comes from the tech config.
+             fed by the tech's ``{commodity}_buy_price`` (or ``price``). This is
+             connected by :class:`SLCRootGroup`, not here.
            - Numeric scalar: no connection needed; the value is used directly as a constant
              marginal cost.
 
@@ -823,7 +817,7 @@ class H2IntegrateModel:
                 )
 
                 if strategy_name == "LPArbitrageControl":
-                    # Input-to-input connections (see Step 4) so one set_val on the
+                    # Input-to-input connections (see Step 5) so one set_val on the
                     # storage tech resizes both the plant and the controller's
                     # optimization bounds, which makes sizing sweeps consistent.
                     storage_params = merge_shared_inputs(
@@ -880,29 +874,12 @@ class H2IntegrateModel:
                                 f"{feedstock_name}.VarOpEx",
                                 f"system_level_controller.{feedstock_name}_VarOpEx",
                             )
-                    elif cost_spec == "buy_price":
-                        # Input-to-input connection (OpenMDAO 3.44+): tie the
-                        # tech's own buy-price input to the SLC's buy-price
-                        # input so a single ``prob.set_val()`` on the tech
-                        # updates both the cost model and the controller.
-                        #
-                        # OpenMDAO 3.44 requires input-to-input connections to
-                        # be made on the top-level model (not a subgroup); we
-                        # use promoted names from ``self.plant`` since the
-                        # plant is added to ``self.model`` with ``promotes=*``.
-                        tech_buy_price_input = _get_tech_buy_price_input_name(
-                            self.technology_config, tech_name
-                        )
-                        if tech_buy_price_input is not None:
-                            self.model.connect(
-                                f"{tech_name}.{tech_buy_price_input}",
-                                f"system_level_controller.{tech_name}_buy_price",
-                            )
-                    # numeric scalar: used directly, no connection needed
+                    # buy_price is connected by SLCRootGroup.configure;
+                    # a numeric scalar is used directly.
 
         # --- Step 5: Connect the demand profile to the controller ---------
-        # Input-to-input connection (OpenMDAO 3.44+): as with the buy_price
-        # connection above, this must be made on the top-level model rather
+        # Input-to-input connection (OpenMDAO 3.44+): as with the price
+        # connections, this must be made on the top-level model rather
         # than a subgroup. Connecting via ``self.plant`` (a subgroup) leaves
         # the demand tech's promoted "*" alias at the model level dangling,
         # so auto_ivc creates a second, conflicting source for the same
@@ -914,24 +891,10 @@ class H2IntegrateModel:
             f"system_level_controller.{demand_commodity}_demand",
         )
 
-        # --- Step 6: Connect the export sale price to the controller -------
-        # Export-aware strategies price their export decision off the export
-        # technology's own sell price, so the controller and the cost model
-        # always agree on the value of a sold unit. This is an input-to-input
-        # connection (OpenMDAO 3.44+), made on the top-level model, matching the
-        # ``buy_price`` handling in Step 4.
-        export_tech = slc_topology.get("export_tech", None)
-        if export_tech is not None:
-            sell_price_input = _get_tech_sell_price_input_name(self.technology_config, export_tech)
-            if sell_price_input is not None:
-                self.model.connect(
-                    f"{export_tech}.{sell_price_input}",
-                    f"system_level_controller.{export_tech}_sell_price",
-                )
-
-        # --- Step 7: Connect optional headroom signals from an existing plant ---
+        # --- Step 6: Connect optional headroom signals from an existing plant ---
         # These let a controller value an addition against only what an existing
         # plant leaves unserved (its unmet demand) or spills (its unused output).
+        export_tech = slc_topology.get("export_tech", None)
         control_parameters = plant_slc_config.get("control_parameters", {})
         headroom_sources = {
             "export_limit_component": ("unmet_{}_demand_out", "{}_unmet_demand"),
