@@ -373,7 +373,10 @@ properties:
         type: string
         description: >-
           filename to save the .sql file to, written inside
-          general/folder_output
+          general/folder_output. May include a subfolder, such as
+          sweep_1/cases.sql. When running in parallel under MPI, OpenMDAO
+          writes one {file}_{rank} file per process plus a {file}_meta file
+          next to this path.
       overwrite_recorder:
         type: boolean
         description: >-
@@ -383,7 +386,7 @@ properties:
         type: string
         description: >-
           whether to attach the recorder to the driver or model. Defaults to
-          driver, which is recommended when running in parallel.
+          driver, which is required when running cases in parallel.
         enum: [driver, model]
       includes:
         type: array

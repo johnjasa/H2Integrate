@@ -160,6 +160,18 @@ def test_make_unique_filename(subtests):
 
 
 @pytest.mark.unit
+def test_make_unique_filename_parallel_recorder_files(temp_dir, subtests):
+    for fname in ["cases.sql_0", "cases.sql_1", "cases.sql_meta"]:
+        (temp_dir / fname).touch()
+    with subtests.test("Per-process files count as existing"):
+        assert make_unique_case_name(temp_dir, "cases.sql", ".sql") == "cases0.sql"
+
+    (temp_dir / "cases0.sql_0").touch()
+    with subtests.test("Numbered per-process files are incremented"):
+        assert make_unique_case_name(temp_dir, "cases.sql", ".sql") == "cases1.sql"
+
+
+@pytest.mark.unit
 def test_check_data_dir_no_dir(subtests):
     output_dir = check_data_dir(data_type="resource")
     output_resource_dir = check_resource_dir()

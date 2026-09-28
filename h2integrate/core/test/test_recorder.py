@@ -1,13 +1,111 @@
 import sys
 
 import pytest
+import openmdao.api as om
 
 from h2integrate import H2IntegrateModel, load_driver_yaml
+from h2integrate.core import pose_optimization
+from h2integrate.core.pose_optimization import PoseOptimization
 
 
 TEST_RECORDER_OUTPUT_FILE0 = "testingtesting_filename.sql"
 TEST_RECORDER_OUTPUT_FILE1 = "testingtesting_filename0.sql"
 TEST_RECORDER_OUTPUT_FILE2 = "testingtesting_filename1.sql"
+
+
+class FakeMPIComm:
+    """Stand-in for an MPI communicator on one rank of a multi-process run."""
+
+    def __init__(self, rank, size, value_from_root=None):
+        self.rank = rank
+        self.size = size
+        self.value_from_root = value_from_root
+
+    def bcast(self, obj, root=0):
+        return obj if self.rank == root else self.value_from_root
+
+
+class FakeProblem:
+    """Minimal stand-in for an ``om.Problem`` that exposes what ``set_recorders`` uses."""
+
+    def __init__(self, comm, run_parallel=True):
+        self.comm = comm
+        self.model = om.Group()
+        self.driver = om.DOEDriver(om.UniformGenerator(num_samples=2))
+        self.driver.options["run_parallel"] = run_parallel
+
+
+def make_recorder_config(folder_output, **recorder_options):
+    return {
+        "general": {"folder_output": str(folder_output)},
+        "recorder": {"flag": True, "file": "cases.sql", **recorder_options},
+    }
+
+
+@pytest.mark.unit
+def test_parallel_recorder_path(temp_dir, monkeypatch, subtests):
+    """Test that all MPI ranks use the recorder path chosen on rank 0."""
+    monkeypatch.setattr(pose_optimization, "MPI", object())
+    output_folder = temp_dir / "outputs"
+    output_folder.mkdir()
+    for fname in ["cases.sql_0", "cases.sql_1", "cases.sql_meta"]:
+        (output_folder / fname).touch()
+
+    root_path = PoseOptimization(make_recorder_config(output_folder)).set_recorders(
+        FakeProblem(FakeMPIComm(rank=0, size=2))
+    )
+    with subtests.test("rank 0 does not reuse the name of a previous parallel run"):
+        assert root_path == (output_folder / "cases0.sql").absolute()
+
+    other_folder = temp_dir / "not_created"
+    other_path = PoseOptimization(make_recorder_config(other_folder)).set_recorders(
+        FakeProblem(FakeMPIComm(rank=1, size=2, value_from_root=root_path))
+    )
+    with subtests.test("other ranks use the path broadcast from rank 0"):
+        assert other_path == root_path
+    with subtests.test("other ranks do not touch the file system"):
+        assert not other_folder.exists()
+
+
+@pytest.mark.unit
+def test_parallel_recorder_overwrite(temp_dir, monkeypatch, subtests):
+    """Test that overwriting a parallel recording removes every file from the previous run."""
+    monkeypatch.setattr(pose_optimization, "MPI", object())
+    stale_files = ["cases.sql", "cases.sql_0", "cases.sql_1", "cases.sql_2", "cases.sql_meta"]
+    kept_files = ["cases0.sql_0", "cases.sql.csv", "other_cases.sql"]
+    for fname in stale_files + kept_files:
+        (temp_dir / fname).touch()
+
+    config = make_recorder_config(temp_dir, overwrite_recorder=True)
+    recorder_path = PoseOptimization(config).set_recorders(FakeProblem(FakeMPIComm(0, 2)))
+
+    with subtests.test("recorder path is the requested file"):
+        assert recorder_path == (temp_dir / "cases.sql").absolute()
+    with subtests.test("files from the previous run are removed"):
+        assert not any((temp_dir / fname).exists() for fname in stale_files)
+    with subtests.test("unrelated files are kept"):
+        assert all((temp_dir / fname).exists() for fname in kept_files)
+
+
+@pytest.mark.unit
+def test_recorder_file_in_subfolder(temp_dir):
+    """Test that the recorder file can be placed in a subfolder of the output folder."""
+    config = make_recorder_config(temp_dir)
+    config["recorder"]["file"] = "sweep_1/cases.sql"
+    recorder_path = PoseOptimization(config).set_recorders(FakeProblem(FakeMPIComm(0, 1)))
+
+    assert recorder_path == (temp_dir / "sweep_1" / "cases.sql").absolute()
+    assert recorder_path.parent.is_dir()
+
+
+@pytest.mark.unit
+def test_parallel_model_recorder_raises(temp_dir, monkeypatch):
+    """Test that model recording is rejected when cases run in parallel under MPI."""
+    monkeypatch.setattr(pose_optimization, "MPI", object())
+    config = make_recorder_config(temp_dir, recorder_attachment="model")
+
+    with pytest.raises(ValueError, match="cannot record cases that are run in parallel"):
+        PoseOptimization(config).set_recorders(FakeProblem(FakeMPIComm(0, 2)))
 
 
 @pytest.mark.unit

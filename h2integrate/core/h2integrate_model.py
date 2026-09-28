@@ -2083,7 +2083,9 @@ class H2IntegrateModel:
             print_results (bool): If True, print a summary of all model inputs
                 and outputs. Defaults to True.
             summarize_sql (bool): If True and a recorder file was written,
-                convert the SQL recorder file to a CSV summary. Defaults to False.
+                convert the SQL recorder file to a CSV summary. When running under MPI,
+                this waits for every process to finish recording and then writes a single
+                summary of all processes' cases from rank 0. Defaults to False.
             show_plots (bool): If True, run post-processing plots for any
                 performance models that support them. Defaults to False.
         """
@@ -2097,7 +2099,12 @@ class H2IntegrateModel:
         if summarize_sql and self.recorder_path is not None:
             from h2integrate.postprocess.sql_to_csv import convert_sql_to_csv_summary
 
-            convert_sql_to_csv_summary(self.recorder_path, save_to_file=True)
+            comm = self.prob.comm
+            if comm.size > 1:
+                # other ranks may still be writing their cases
+                comm.barrier()
+            if comm.rank == 0:
+                convert_sql_to_csv_summary(self.recorder_path, save_to_file=True)
 
         for model in self.performance_models:
             if hasattr(model, "post_process") and callable(model.post_process):

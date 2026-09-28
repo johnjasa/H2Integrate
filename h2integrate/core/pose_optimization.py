@@ -3,10 +3,12 @@ This file is based on the WISDEM file of the same name: https://github.com/NLRWi
 Originally adapted by Jared Thomas.
 """
 
+import re
 import warnings
 from pathlib import Path
 
 import openmdao.api as om
+from openmdao.utils.mpi import MPI
 
 from h2integrate.core.file_utils import make_unique_case_name, check_file_format_for_csv_generator
 
@@ -411,53 +413,57 @@ class PoseOptimization:
                         value.pop("flag")
                         opt_prob.model.add_constraint(f"{technology}.{key}", **value)
 
+    def _get_recorder_path(self):
+        """Create the recorder folder and choose the recorder filepath.
+
+        Only call this on one process. When ``overwrite_recorder`` is True, this also deletes
+        the per-process ``{file}_{rank}`` and ``{file}_meta`` files that a previous parallel
+        run wrote, so they are not mixed in with the results of this run.
+
+        Returns:
+            Path: absolute path to the recorder file.
+        """
+        recorder_path = (
+            Path(self.config["general"]["folder_output"]) / self.config["recorder"]["file"]
+        ).absolute()
+        recorder_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if self.config["recorder"].get("overwrite_recorder", False):
+            related_file = re.compile(rf"{re.escape(recorder_path.name)}(_\d+|_meta)?")
+            for fpath in recorder_path.parent.glob(f"{recorder_path.name}*"):
+                if related_file.fullmatch(fpath.name):
+                    fpath.unlink(missing_ok=True)
+            return recorder_path
+
+        # make a unique filename with the same base as the recorder file
+        file_base = recorder_path.name.split(".sql")[0]
+        recorder_fname = make_unique_case_name(recorder_path.parent, f"{file_base}.sql", ".sql")
+        return recorder_path.parent / recorder_fname
+
     def set_recorders(self, opt_prob):
         """sets up a recorder for the openmdao problem as desired in the input yaml
+
+        When running in parallel under MPI, the recorder filepath is chosen on rank 0 and
+        broadcast to all ranks, so OpenMDAO writes one ``{file}_{rank}`` file per recording
+        rank plus a shared ``{file}_meta`` file, all next to the same base filepath.
 
         Args:
             opt_prob (openmdao problem instance): openmdao problem instance
                 for current optimization problem
 
+        Raises:
+            ValueError: If ``recorder_attachment`` is not "driver" or "model", or if it is
+                "model" while the driver runs cases in parallel under MPI.
+
         Returns:
             recorder_path (Path or None): Path to the recorder file if recorder is enabled,
                 None otherwise
         """
-        folder_output = self.config["general"]["folder_output"]
-
         # Set recorder on the OpenMDAO driver level using the `optimization_log`
         # filename supplied in the optimization yaml
         recorder_options = ["record_inputs", "record_outputs", "record_residuals"]
 
         if self.config["recorder"].get("flag", False):
-            # Check that the output folder exists and create it if needed
-            if not Path(folder_output).exists():
-                Path.mkdir(Path(folder_output), parents=True, exist_ok=True)
-
-            overwrite_recorder = self.config["recorder"].get("overwrite_recorder", False)
-            recorder_path = Path(folder_output) / self.config["recorder"]["file"]
-
-            if overwrite_recorder:
-                # OpenMDAO's SqliteRecorder appends to an existing database and then
-                # fails when it tries to create tables that are already there, so the
-                # previous run's file has to go before the new recorder starts up.
-                try:
-                    recorder_path.unlink(missing_ok=True)
-                except OSError:
-                    # The file is still held open, usually by a recorder attached to
-                    # another model built in this same process, so fall back to a
-                    # unique name rather than failing the setup.
-                    overwrite_recorder = False
-
-            if not overwrite_recorder:
-                # make a unique filename with the same base as self.config["recorder"]["file"]
-                # separate out the filename without the extension
-                file_base = self.config["recorder"]["file"].split(".sql")[0]
-
-                recorder_fname = make_unique_case_name(
-                    Path(folder_output), f"{file_base}.sql", ".sql"
-                )
-                recorder_path = Path(folder_output) / recorder_fname
-
             recorder_attachment = (
                 self.config["recorder"].get("recorder_attachment", "driver").lower()
             )
@@ -470,6 +476,24 @@ class PoseOptimization:
                     "or parameter sweep in parallel."
                 )
                 raise ValueError(msg)
+
+            comm = opt_prob.comm
+            is_mpi_run = MPI is not None and comm.size > 1
+            driver_options = opt_prob.driver.options
+            run_parallel = "run_parallel" in driver_options and driver_options["run_parallel"]
+            if is_mpi_run and run_parallel and recorder_attachment == "model":
+                # OpenMDAO only records model iterations on rank 0, so the cases
+                # run on every other rank would be silently dropped.
+                msg = (
+                    "recorder_attachment 'model' cannot record cases that are run in parallel. "
+                    "Set recorder_attachment to 'driver' to record the cases from every process."
+                )
+                raise ValueError(msg)
+
+            recorder_path = self._get_recorder_path() if comm.rank == 0 else None
+            if is_mpi_run:
+                # OpenMDAO appends the rank to this path, so it must match on every rank
+                recorder_path = comm.bcast(recorder_path, root=0)
 
             # Create recorder
             recorder = om.SqliteRecorder(recorder_path)

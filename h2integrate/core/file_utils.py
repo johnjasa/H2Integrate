@@ -310,6 +310,10 @@ def write_readable_yaml(instance: dict, foutput: str | Path):
 def make_unique_case_name(folder, proposed_fname, fext):
     """Generate a filename that does not already exist in a user-defined folder.
 
+    Files whose extension has an added suffix also count as existing, such as the
+    ``cases.sql_0`` and ``cases.sql_meta`` files that OpenMDAO writes for ``cases.sql``
+    when recording in parallel under MPI.
+
     Args:
         folder (str | Path): directory that a file is expected to be created in.
         proposed_fname (str): filename (with extension) to check for existence and
@@ -324,7 +328,7 @@ def make_unique_case_name(folder, proposed_fname, fext):
 
     # if file(s) exist with the same base name, make a new unique filename
     file_base = proposed_fname.split(fext)[0]
-    existing_files = [f for f in Path(folder).glob(f"**/*{fext}") if file_base in f.name]
+    existing_files = [f for f in Path(folder).glob(f"**/*{fext}*") if file_base in f.name]
     if len(existing_files) == 0:
         return proposed_fname
 
