@@ -65,6 +65,9 @@ class MethanolCostConfig(BaseConfig):
     foc_kg_y2: float = field()
     voc_kg: float = field()
     cost_year: int = field(converter=int)
+    baseline_capacity_kgpy: float | None = field(default=None)
+    capex_scaling_exponent: float = field(default=1.0)
+    fixed_opex_scaling_exponent: float = field(default=1.0)
 
 
 class MethanolCostBaseClass(CostModelBaseClass):
@@ -83,6 +86,12 @@ class MethanolCostBaseClass(CostModelBaseClass):
             get CapEx
         - foc_kg_y^2: (float) fixed operating cost (FOC) slope - multiply by plant_capacity_kgpy to
             get Fixed_OpEx
+        - baseline_capacity_kgpy: (float) capacity at which toc_kg_y and foc_kg_y2 apply.
+            Defaults to plant_capacity_kgpy from the config.
+        - capex_scaling_exponent: (float) TOC = toc_kg_y * baseline *
+            (plant_capacity_kgpy / baseline) ** exponent. Defaults to 1 (linear).
+        - fixed_opex_scaling_exponent: (float) same power-law scaling applied to FOC.
+            Defaults to 1 (linear).
         - voc_kg: (float) variable operating cost - multiply by methanol to get Variable_OpEx
         - methanol_out: (array) promoted output from MethanolPerformanceBaseClass
     Outputs:
@@ -103,10 +112,22 @@ class MethanolCostBaseClass(CostModelBaseClass):
         self.add_input("foc_kg_y2", units="USD/kg/year**2", val=self.config.foc_kg_y2)
         self.add_input("voc_kg", units="USD/kg", val=self.config.voc_kg)
         self.add_input("plant_capacity_kgpy", units="kg/year", val=self.config.plant_capacity_kgpy)
+        baseline = self.config.baseline_capacity_kgpy or self.config.plant_capacity_kgpy
+        self.add_input("baseline_capacity_kgpy", units="kg/year", val=baseline)
+        self.add_input("capex_scaling_exponent", val=self.config.capex_scaling_exponent)
+        self.add_input("fixed_opex_scaling_exponent", val=self.config.fixed_opex_scaling_exponent)
         self.add_input("methanol_out", shape=self.n_timesteps, units="kg/h")
 
         self.add_output("Fixed_OpEx", units="USD/year")
         self.add_output("Variable_OpEx", units="USD/year")
+
+    def scaled_fixed_costs(self, inputs):
+        """Return (TOC in USD, FOC in USD/year) scaled from the baseline capacity."""
+        baseline = inputs["baseline_capacity_kgpy"]
+        ratio = inputs["plant_capacity_kgpy"] / baseline
+        toc_usd = inputs["toc_kg_y"] * baseline * ratio ** inputs["capex_scaling_exponent"]
+        foc_usd_y = inputs["foc_kg_y2"] * baseline * ratio ** inputs["fixed_opex_scaling_exponent"]
+        return toc_usd, foc_usd_y
 
 
 @define(kw_only=True)

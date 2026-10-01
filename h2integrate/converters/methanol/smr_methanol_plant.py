@@ -185,8 +185,7 @@ class SMRMethanolPlantCostModel(MethanolCostBaseClass):
         self.add_output("elec_revenue", units="USD/year")
 
     def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
-        toc_usd = inputs["plant_capacity_kgpy"] * inputs["toc_kg_y"]
-        foc_usd_y = inputs["plant_capacity_kgpy"] * inputs["foc_kg_y2"]
+        toc_usd, foc_usd_y = self.scaled_fixed_costs(inputs)
         voc_usd_y = np.sum(inputs["methanol_out"]) * inputs["voc_kg"]
 
         ppa_price = self.options["plant_config"]["plant"]["ppa_price"]

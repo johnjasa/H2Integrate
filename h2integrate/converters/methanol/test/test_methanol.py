@@ -4,7 +4,10 @@ import openmdao.api as om
 from pytest import fixture
 
 from h2integrate.converters.methanol.smr_methanol_plant import SMRMethanolPlantPerformanceModel
-from h2integrate.converters.methanol.co2h_methanol_plant import CO2HMethanolPlantPerformanceModel
+from h2integrate.converters.methanol.co2h_methanol_plant import (
+    CO2HMethanolPlantCostModel,
+    CO2HMethanolPlantPerformanceModel,
+)
 
 
 @fixture
@@ -150,6 +153,43 @@ def test_co2h_model_outputs(plant_config, co2h_tech_config, subtests):
         assert prob.get_val("comp.operational_life", units="yr") == plant_life
     with subtests.test("replacement_schedule value"):
         assert np.all(prob.get_val("comp.replacement_schedule", units="unitless") == 0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("exponent", [1.0, 0.6])
+def test_co2h_cost_capacity_scaling(plant_config, exponent):
+    baseline = 127893196.8
+    cost_params = {
+        "plant_capacity_kgpy": baseline,
+        "plant_capacity_flow": "methanol",
+        "toc_kg_y": 1.0633873,
+        "foc_kg_y2": 0.020743864,
+        "voc_kg": 0.00079,
+        "ng_lhv": 47.1,
+        "meoh_syn_cat_price": 615.274273,
+        "ng_price": 4.0,
+        "co2_price": 0.0,
+        "cost_year": 2020,
+        "baseline_capacity_kgpy": baseline,
+        "capex_scaling_exponent": exponent,
+        "fixed_opex_scaling_exponent": exponent,
+    }
+    prob = om.Problem()
+    comp = CO2HMethanolPlantCostModel(
+        plant_config=plant_config,
+        tech_config={"model_inputs": {"cost_parameters": cost_params}},
+        driver_config={},
+    )
+    prob.model.add_subsystem("comp", comp, promotes=["*"])
+    prob.setup()
+    prob.set_val("plant_capacity_kgpy", 2 * baseline, units="kg/year")
+    prob.run_model()
+
+    scale = 2**exponent
+    assert prob.get_val("CapEx", units="USD")[0] == pytest.approx(1.0633873 * baseline * scale)
+    assert prob.get_val("Fixed_OpEx", units="USD/year")[0] == pytest.approx(
+        0.020743864 * baseline * scale
+    )
 
 
 @pytest.mark.unit
