@@ -236,3 +236,45 @@ def test_h2_storage_average_flow_rate():
 
     # OpEx should be lower for the variable case (lower average flow rate)
     assert opex2 < opex1
+
+
+@pytest.mark.regression
+def test_compressed_gas_terminal_sizing_uses_charge_rate():
+    """Pass-through hydrogen flow must not size storage terminal equipment."""
+    max_charge_rate = 1.0
+    plant_config = {
+        "plant": {
+            "plant_life": 30,
+            "simulation": {"dt": 3600, "n_timesteps": 8760},
+        },
+    }
+
+    def capex_for_hydrogen_flow(flow_rate, charge_rate=max_charge_rate):
+        local_tech_config = {
+            "model_inputs": {
+                "shared_parameters": {
+                    "max_capacity": 1.0,
+                    "max_charge_rate": charge_rate,
+                },
+                "cost_parameters": {"storage_pressure_bar": 350},
+            }
+        }
+        prob = om.Problem()
+        comp = supported_models["CompressedGasStorageCostModel"](
+            plant_config=plant_config,
+            tech_config=local_tech_config,
+            driver_config={},
+        )
+        prob.model.add_subsystem("sys", comp)
+        prob.setup()
+        prob.set_val("sys.hydrogen_in", np.full(8760, flow_rate), units="kg/h")
+        prob.run_model()
+        return prob.get_val("sys.CapEx", units="USD")[0]
+
+    low_flow_capex = capex_for_hydrogen_flow(max_charge_rate)
+    pass_through_capex = capex_for_hydrogen_flow(10_000.0)
+    zero_charge_capex = capex_for_hydrogen_flow(10_000.0, charge_rate=0.0)
+
+    assert pass_through_capex == pytest.approx(low_flow_capex)
+    assert pass_through_capex < 2_000_000
+    assert np.isfinite(zero_charge_capex)

@@ -610,20 +610,16 @@ class CompressedGasStorageCostModel(HydrogenStorageBaseCostModel):
         # ============================================================================
         # Relevant design parameters (mostly rows 32-74 of "Compressed Gas H2 Terminal" in [1])
 
-        h2_in_kg_d = units.convert_units(
-            inputs["hydrogen_in"], f"({self.config.commodity_rate_units})", "kg/d"
+        terminal_capacity_kg_d = units.convert_units(
+            inputs["max_charge_rate"][0], f"{self.config.commodity_rate_units}", "kg/d"
         )
-        terminal_capacity_kg_d = np.max(h2_in_kg_d)
         storage_capacity_kg = units.convert_units(
             inputs["storage_capacity"][0], f"({self.config.commodity_rate_units})*h", "kg"
         )
         n_compressors = np.ceil(terminal_capacity_kg_d / 24 / 50)  # Cell B59
         # Not sure where the 50 comes from in HDSAM - using rule of thumb of 1 unit per 50 kg/hr?
-        # When the terminal handles (essentially) no hydrogen throughput -- e.g. on the first
-        # iteration of a system-level-control solve, before upstream production has converged --
-        # no storage compressor is required. Skip the compressor sizing in that case to avoid the
-        # divide-by-zero (flow / n_compressors) and log(0) in the power/cost correlations, which
-        # would otherwise produce NaN CapEx and abort the plant's nonlinear solver.
+        # A zero charge rate means no storage compressor is required. Skip compressor sizing to
+        # avoid divide-by-zero and log(0) in the power/cost correlations.
         needs_compressor = terminal_capacity_kg_d > 0 and n_compressors >= 1
         if needs_compressor:
             storage_compressor = Compressor(
