@@ -249,11 +249,13 @@ def test_compressed_gas_terminal_sizing_uses_charge_rate():
         },
     }
 
-    def capex_for_hydrogen_flow(flow_rate, charge_rate=max_charge_rate):
+    def capex_for_hydrogen_flow(
+        flow_rate, charge_rate=max_charge_rate, storage_capacity=1.0
+    ):
         local_tech_config = {
             "model_inputs": {
                 "shared_parameters": {
-                    "max_capacity": 1.0,
+                    "max_capacity": storage_capacity,
                     "max_charge_rate": charge_rate,
                 },
                 "cost_parameters": {"storage_pressure_bar": 350},
@@ -274,7 +276,15 @@ def test_compressed_gas_terminal_sizing_uses_charge_rate():
     low_flow_capex = capex_for_hydrogen_flow(max_charge_rate)
     pass_through_capex = capex_for_hydrogen_flow(10_000.0)
     zero_charge_capex = capex_for_hydrogen_flow(10_000.0, charge_rate=0.0)
+    negative_storage_capex = capex_for_hydrogen_flow(
+        max_charge_rate, storage_capacity=-436_000.0
+    )
+    zero_storage_capex = capex_for_hydrogen_flow(
+        max_charge_rate, storage_capacity=0.0
+    )
 
     assert pass_through_capex == pytest.approx(low_flow_capex)
     assert pass_through_capex < 2_000_000
     assert np.isfinite(zero_charge_capex)
+    assert negative_storage_capex == pytest.approx(zero_storage_capex)
+    assert negative_storage_capex >= 0.0

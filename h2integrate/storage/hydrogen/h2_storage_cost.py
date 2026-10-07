@@ -616,6 +616,7 @@ class CompressedGasStorageCostModel(HydrogenStorageBaseCostModel):
         storage_capacity_kg = units.convert_units(
             inputs["storage_capacity"][0], f"({self.config.commodity_rate_units})*h", "kg"
         )
+        storage_capacity_kg = max(float(storage_capacity_kg), 0.0)
         n_compressors = np.ceil(terminal_capacity_kg_d / 24 / 50)  # Cell B59
         # Not sure where the 50 comes from in HDSAM - using rule of thumb of 1 unit per 50 kg/hr?
         # A zero charge rate means no storage compressor is required. Skip compressor sizing to
