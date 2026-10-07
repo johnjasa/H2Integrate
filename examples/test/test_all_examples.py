@@ -2300,7 +2300,7 @@ def test_24_solar_battery_grid_example(subtests, temp_copy_of_example):
 
     with subtests.test("Value check on LCOE"):
         lcoe = model.prob.get_val("finance_subgroup_renewables.LCOE", units="USD/(MW*h)")[0]
-        assert pytest.approx(lcoe, rel=1e-4) == 91.7057887
+        assert pytest.approx(lcoe, rel=1e-4) == 89.9757752
 
 
 @pytest.mark.integration

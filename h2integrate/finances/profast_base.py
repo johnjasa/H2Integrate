@@ -605,6 +605,14 @@ class ProFastBase(om.ExplicitComponent):
         Args:
             inputs (dict): OpenMDAO input values for technology CapEx, OpEx, and production levels.
 
+        Notes:
+            Technology-specific ``capital_items.investment_tax_credit`` values are fractions
+            of initial adjusted CapEx. Their dollar amounts are added to ProFAST's one-time
+            capital incentive on every evaluation, excluding refurbishment costs.
+
+        Raises:
+            ValueError: If a technology's investment tax credit is not a fraction from 0 to 1.
+
         Returns:
             ProFAST: A fully configured ProFAST financial model object ready for execution.
         """
@@ -658,12 +666,24 @@ class ProFastBase(om.ExplicitComponent):
             tech_model_inputs = self.tech_config[tech].get("model_inputs")
             if tech_model_inputs is None:
                 continue  # Skip this tech if no model_inputs
-            tech_capex_info = tech_model_inputs.get("financial_parameters", {}).get(
-                "capital_items", {}
+            tech_capex_info = dict(
+                tech_model_inputs.get("financial_parameters", {}).get("capital_items", {})
             )
 
             # add CapEx cost to tech-specific capital item entry
             tech_capex_info.update({"cost": float(inputs[f"capex_adjusted_{tech}"][0])})
+
+            investment_tax_credit = tech_capex_info.pop("investment_tax_credit", 0.0)
+            if not isinstance(investment_tax_credit, int | float) or not (
+                0.0 <= investment_tax_credit <= 1.0
+            ):
+                raise ValueError(
+                    f"investment_tax_credit for technology '{tech}' must be a fraction "
+                    "between 0 and 1. Use 0.4 for a 40% credit."
+                )
+            profast_params["one time cap inct"]["value"] += (
+                investment_tax_credit * tech_capex_info["cost"]
+            )
 
             # see if any refurbishment information was input
             if "replacement_cost_percent" in tech_capex_info:

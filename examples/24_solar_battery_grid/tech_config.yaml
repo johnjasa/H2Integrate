@@ -54,6 +54,9 @@ technologies:
         energy_capex: 300  # $/kWh
         power_capex: 100  # $/kW
         opex_fraction: 0.05  # percent of capex
+      financial_parameters:
+        capital_items:
+          investment_tax_credit: 0.4
   electrical_load_demand:
     performance_model:
       model: GenericDemandComponent
