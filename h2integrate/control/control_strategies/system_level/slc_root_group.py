@@ -3,7 +3,7 @@ import warnings
 import numpy as np
 import openmdao.api as om
 
-from h2integrate.control.control_strategies.system_level.system_level_control_base import (
+from h2integrate.control.control_strategies.system_level.system_level_control_baseclass import (
     price_src_indices,
 )
 
