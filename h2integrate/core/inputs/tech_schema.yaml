@@ -92,6 +92,15 @@ properties:
               financial_parameters:
                 type: object
                 description: Input parameters for the finance model
+                properties:
+                  capital_items:
+                    type: object
+                    properties:
+                      investment_tax_credit:
+                        type: number
+                        minimum: 0
+                        maximum: 1
+                        description: One-time investment tax credit as a fraction of initial adjusted CapEx (0.4 for 40%)
               control_parameters:
                 type: object
                 description: Input parameters for the technology control model

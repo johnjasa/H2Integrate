@@ -191,3 +191,32 @@ technologies:
           refurbishment_period_years: 15
           replacement_cost_percent: 1.0
 ```
+
+### Investment tax credit
+
+Both `ProFastNPV` and `ProFastLCO` support a technology-specific investment tax credit (ITC).
+For a 40% battery ITC, add the following financial parameters to the battery's existing
+entry in `tech_config`:
+
+```yaml
+technologies:
+  battery:
+    model_inputs:
+      financial_parameters:
+        capital_items:
+          investment_tax_credit: 0.4
+```
+
+`investment_tax_credit` is a fraction from 0 to 1 and defaults to 0 when omitted. The
+credit equals this fraction times the technology's initial `capex_adjusted_<tech>`,
+including all capital costs reported by its cost model and adjusted to the finance
+group's target dollar year. Replacement and refurbishment costs do not receive this credit.
+The credit is recalculated whenever CapEx changes, including during sizing or optimization.
+
+Credits are summed only over technologies included in the finance subgroup and added
+to the `value` of ProFAST's `one_time_cap_inct` parameter. Any explicitly configured
+one-time capital incentive is preserved, so do not also include the same battery credit
+there. The remaining `one_time_cap_inct` settings retain their configured values;
+`depreciable` defaults to `False`. The credit does not reduce the reported capital cost
+or automatically change the battery's depreciation basis. Eligibility and the applicable
+credit rate must be supplied by the user.

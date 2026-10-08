@@ -2,7 +2,7 @@ from attrs import field, define, validators
 from mcm.capture import echem_oae
 
 from h2integrate.core.utilities import BaseConfig, merge_shared_inputs
-from h2integrate.core.model_baseclasses import (
+from h2integrate.core.model_baseclass import (
     CostModelBaseClass,
     CostModelBaseConfig,
     PerformanceModelBaseClass,
@@ -191,7 +191,7 @@ class OAEPerformanceModel(PerformanceModelBaseClass):
         OAE_inputs = setup_ocean_alkalinity_enhancement_inputs(self.config)
 
         # Call the OAE calculation method from the echem_oae module
-        range_outputs, oae_outputs = echem_oae.run_ocean_alkalinity_enhancement_physics_model(
+        _range_outputs, oae_outputs = echem_oae.run_ocean_alkalinity_enhancement_physics_model(
             power_profile_w=inputs["electricity_in"],
             power_capacity_w=max(
                 inputs["electricity_in"]
@@ -253,6 +253,13 @@ class OAECostModelConfig(CostModelBaseConfig):
     """
 
     cost_year: int = field(default=2024, converter=int, validator=validators.in_([2024]))
+
+
+@define(kw_only=True)
+class OAECostAndFinancialModelConfig(OAECostModelConfig):
+    """Configuration for the combined OAE cost and finance model."""
+
+    pass
 
 
 class OAECostModel(CostModelBaseClass):
@@ -366,12 +373,12 @@ class OAECostAndFinancialModel(CostModelBaseClass):
 
     def setup(self):
         if "cost" in self.options["tech_config"]["model_inputs"]:
-            self.config = OAECostModelConfig.from_dict(
+            self.config = OAECostAndFinancialModelConfig.from_dict(
                 merge_shared_inputs(self.options["tech_config"]["model_inputs"], "cost"),
                 additional_cls_name=self.__class__.__name__,
             )
         else:
-            self.config = OAECostModelConfig.from_dict(
+            self.config = OAECostAndFinancialModelConfig.from_dict(
                 data={},
                 additional_cls_name=self.__class__.__name__,
             )

@@ -2,7 +2,7 @@ import PySAM.MhkTidal as MhkTidal
 from attrs import field, define, validators
 
 from h2integrate.core.utilities import BaseConfig, merge_shared_inputs
-from h2integrate.core.model_baseclasses import PerformanceModelBaseClass
+from h2integrate.core.model_baseclass import PerformanceModelBaseClass
 
 
 @define(kw_only=True)
@@ -62,8 +62,7 @@ class PySAMTidalPerformanceConfig(BaseConfig):
 
         if self.create_model_from == "new" and self.tidal_power_curve is None:
             msg = (
-                "To create a new MhkTidal object, please provide a "
-                "tidal_power_curve in the config."
+                "To create a new MhkTidal object, please provide a tidal_power_curve in the config."
             )
             raise ValueError(msg)
 

@@ -1,3 +1,4 @@
+import copy
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -5,6 +6,7 @@ import pytest
 import openmdao.api as om
 from pytest import fixture
 
+from h2integrate.finances.profast_lco import ProFastLCO
 from h2integrate.finances.profast_npv import ProFastNPV
 
 
@@ -95,6 +97,160 @@ def fake_cost_dict():
         "varopex_adjusted_natural_gas": [65458026.9] * 30,
     }
     return fake_costs
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("finance_model", [ProFastNPV, ProFastLCO])
+@pytest.mark.parametrize("credit_rate", [0.0, 0.4, 1.0])
+@pytest.mark.parametrize("battery_name", ["battery", "storage_bank"])
+def test_battery_investment_tax_credit(
+    finance_model,
+    credit_rate,
+    battery_name,
+    profast_inputs_no1,
+    fake_filtered_tech_config,
+    subtests,
+):
+    profast_inputs_no1["params"]["one_time_cap_inct"] = {
+        "value": 500.0,
+        "depr_type": "MACRS",
+        "depr_period": 5,
+        "depreciable": False,
+    }
+    fake_filtered_tech_config.pop("battery")
+    capital_items = {
+        "investment_tax_credit": credit_rate,
+        "replacement_cost_percent": 1.0,
+    }
+    fake_filtered_tech_config[battery_name] = {
+        "model_inputs": {"financial_parameters": {"capital_items": capital_items}}
+    }
+    plant_config = {
+        "plant": {"plant_life": 30},
+        "finance_parameters": {"model_inputs": profast_inputs_no1},
+    }
+    prob = om.Problem()
+    component = finance_model(
+        driver_config={},
+        plant_config=plant_config,
+        tech_config=fake_filtered_tech_config,
+        commodity_type="electricity",
+    )
+    ivc = om.IndepVarComp()
+    ivc.add_output("rated_electricity_production", 1000.0, units="kW")
+    ivc.add_output("capacity_factor", np.ones(30), units="unitless")
+    prob.model.add_subsystem("ivc", ivc, promotes=["*"])
+    prob.model.add_subsystem("pf", component, promotes=["*"])
+    prob.setup()
+    component.price_units = "USD/(kW*h)"
+    component.commodity_amount_units = "kW*h"
+    inputs = {
+        "rated_electricity_production": np.array([1000.0]),
+        "capacity_factor": np.ones(30),
+    }
+    for technology in fake_filtered_tech_config:
+        inputs[f"capex_adjusted_{technology}"] = np.array([1.0e6])
+        inputs[f"opex_adjusted_{technology}"] = np.array([0.0])
+        inputs[f"varopex_adjusted_{technology}"] = np.zeros(30)
+        inputs[f"replacement_schedule_{technology}"] = np.ones(30)
+
+    with patch("h2integrate.finances.profast_base.create_and_populate_profast") as populate:
+        component.populate_profast(inputs)
+        configuration = populate.call_args.args[0]
+        with subtests.test("Credit applies only to battery initial CapEx"):
+            assert configuration["params"]["one time cap inct"]["value"] == (
+                500.0 + credit_rate * 1.0e6
+            )
+            assert configuration["capital_items"][battery_name]["cost"] == 1.0e6
+            assert configuration["capital_items"][battery_name]["refurb"] == [1.0] * 30
+            assert "investment_tax_credit" not in configuration["capital_items"][battery_name]
+
+        inputs[f"capex_adjusted_{battery_name}"] = np.array([2.0e6])
+        component.populate_profast(inputs)
+        with subtests.test("Credit is recalculated without accumulating"):
+            assert populate.call_args.args[0]["params"]["one time cap inct"]["value"] == (
+                500.0 + credit_rate * 2.0e6
+            )
+            assert component.params.one_time_cap_inct["value"] == 500.0
+            assert capital_items["investment_tax_credit"] == credit_rate
+            assert "cost" not in capital_items
+
+        with subtests.test("Credits from multiple technologies are summed"):
+            fake_filtered_tech_config["solar"]["model_inputs"] = {
+                "financial_parameters": {"capital_items": {"investment_tax_credit": 0.3}}
+            }
+            component.populate_profast(inputs)
+            assert populate.call_args.args[0]["params"]["one time cap inct"]["value"] == (
+                500.0 + credit_rate * 2.0e6 + 0.3 * 1.0e6
+            )
+
+        for invalid_rate in [-0.1, 1.1, 40, np.nan, np.inf, "0.4", None]:
+            with subtests.test("Invalid credit rate", rate=invalid_rate):
+                capital_items["investment_tax_credit"] = invalid_rate
+                with pytest.raises(ValueError, match="must be a fraction between 0 and 1"):
+                    component.populate_profast(inputs)
+    prob.cleanup()
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("finance_model", [ProFastNPV, ProFastLCO])
+def test_battery_itc_financial_results(
+    finance_model, profast_inputs_no1, fake_filtered_tech_config, fake_cost_dict, subtests
+):
+    battery_credit = 0.4 * fake_cost_dict["capex_adjusted_battery"]
+    prob = om.Problem()
+    ivc = om.IndepVarComp()
+    ivc.add_output("rated_electricity_production", 500000.0, units="kW")
+    ivc.add_output("capacity_factor", np.ones(30), units="unitless")
+    prob.model.add_subsystem("ivc", ivc, promotes=["*"])
+    for name, credit_rate, incentive_value in [
+        ("baseline", 0.0, 0.0),
+        ("battery_itc", 0.4, 0.0),
+        ("explicit_credit", 0.0, battery_credit),
+    ]:
+        model_inputs = copy.deepcopy(profast_inputs_no1)
+        model_inputs["params"]["one_time_cap_inct"] = {
+            "value": incentive_value,
+            "depr_type": "MACRS",
+            "depr_period": 5,
+            "depreciable": False,
+        }
+        technology_config = copy.deepcopy(fake_filtered_tech_config)
+        technology_config["battery"]["model_inputs"] = {
+            "financial_parameters": {"capital_items": {"investment_tax_credit": credit_rate}}
+        }
+        component = finance_model(
+            driver_config={},
+            plant_config={
+                "plant": {"plant_life": 30},
+                "finance_parameters": {"model_inputs": model_inputs},
+            },
+            tech_config=technology_config,
+            commodity_type="electricity",
+        )
+        prob.model.add_subsystem(
+            name, component, promotes_inputs=["rated_electricity_production", "capacity_factor"]
+        )
+    prob.setup()
+    for name in ["baseline", "battery_itc", "explicit_credit"]:
+        for variable, cost in fake_cost_dict.items():
+            prob.set_val(f"{name}.{variable}", cost)
+    prob.run_model()
+
+    output_name = "NPV_electricity" if finance_model is ProFastNPV else "LCOE"
+    baseline = prob.get_val(f"baseline.{output_name}")[0]
+    with_credit = prob.get_val(f"battery_itc.{output_name}")[0]
+    explicit_credit = prob.get_val(f"explicit_credit.{output_name}")[0]
+    with subtests.test("Credit matches an equivalent ProFAST dollar incentive"):
+        assert with_credit == pytest.approx(explicit_credit)
+    with subtests.test("Credit improves the financial metric"):
+        if finance_model is ProFastNPV:
+            assert with_credit > baseline
+        else:
+            assert with_credit < baseline
+            breakdown = prob.get_val("battery_itc.LCOE_breakdown")
+            assert breakdown["LCOE: Total ($/kW*h)"] == pytest.approx(with_credit)
+    prob.cleanup()
 
 
 @pytest.mark.regression
@@ -587,3 +743,66 @@ def test_profast_npv_uses_first_year_price_for_construction_padding(
 
     with subtests.test("NPV uses mocked cash_flow return"):
         assert prob.get_val("pf.NPV_electricity_no2", units="USD")[0] == pytest.approx(123.0)
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("use_slc", [True, False])
+def test_profast_npv_warnings(
+    profast_inputs_no1, fake_filtered_tech_config, fake_cost_dict, subtests, use_slc
+):
+    mean_hourly_production = 500000.0
+    prob = om.Problem()
+    plant_config = {
+        "plant": {
+            "plant_life": 30,
+        },
+        "finance_parameters": {"model_inputs": profast_inputs_no1},
+    }
+    if use_slc:
+        plant_config["system_level_control"] = {}
+    pf = ProFastNPV(
+        driver_config={},
+        plant_config=plant_config,
+        tech_config=fake_filtered_tech_config,
+        commodity_type="electricity",
+        description="no1",
+    )
+    ivc = om.IndepVarComp()
+
+    ivc.add_output("rated_electricity_production", mean_hourly_production, units="kW")
+    ivc.add_output("capacity_factor", [1.0] * plant_config["plant"]["plant_life"], units="unitless")
+
+    prob.model.add_subsystem("ivc", ivc, promotes=["*"])
+    prob.model.add_subsystem("pf", pf, promotes=["rated_electricity_production", "capacity_factor"])
+    prob.setup()
+    for variable, cost in fake_cost_dict.items():
+        units = "USD" if "capex" in variable else "USD/year"
+        prob.set_val(f"pf.{variable}", cost, units=units)
+
+    # Set rated capacity to 0
+    prob.set_val("pf.rated_electricity_production", 0.0, units="kW")
+
+    with subtests.test("Test zero capacity warning"):
+        expected_str = "has a zero capacity."
+        with pytest.warns(UserWarning) as excinfo:
+            prob.run_model()
+        assert expected_str in str(excinfo.list[0].message)
+        assert str(excinfo.list[0].message).endswith("default value of -1e20")
+
+    with subtests.test("Test zero capacity value"):
+        assert prob.get_val("pf.NPV_electricity_no1", units="GUSD")[0] == -1e11
+
+    # Set capacity factor to 0
+    prob.set_val("pf.rated_electricity_production", mean_hourly_production, units="kW")
+    prob.set_val(
+        "pf.capacity_factor", [0.0] * plant_config["plant"]["plant_life"], units="unitless"
+    )
+    with subtests.test("Test zero capacity factor warning"):
+        expected_str = "has a zero capacity factor."
+        with pytest.warns(UserWarning) as excinfo:
+            prob.run_model()
+        assert expected_str in str(excinfo.list[0].message)
+        assert str(excinfo.list[0].message).endswith("default value of -1e20")
+
+    with subtests.test("Test zero capacity factor value"):
+        assert prob.get_val("pf.NPV_electricity_no1", units="GUSD")[0] == -1e11

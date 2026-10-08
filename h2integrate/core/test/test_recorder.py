@@ -126,6 +126,7 @@ def test_output_folder_creation_first_run(temp_copy_of_example_module_scope, sub
     output_folder = example_folder / driver_config["general"]["folder_output"]
     driver_config["recorder"]["file"] = filename_initial
     driver_config["driver"]["optimization"]["max_iter"] = 5  # to prevent tests taking too long
+    driver_config["recorder"]["includes"] = ["finance_subgroup_hydrogen.LCOH"]
 
     # reset the driver config in H2I
     h2i.driver_config = driver_config
@@ -173,6 +174,7 @@ def test_output_new_recorder_filename_second_run(temp_copy_of_example_module_sco
     output_folder = example_folder / driver_config["general"]["folder_output"]
     driver_config["recorder"]["file"] = filename_initial
     driver_config["driver"]["optimization"]["max_iter"] = 5  # to prevent tests taking too long
+    driver_config["recorder"]["includes"] = ["finance_subgroup_hydrogen.LCOH"]
 
     # reset the driver config in H2I
     h2i.driver_config = driver_config
@@ -216,6 +218,7 @@ def test_output_new_recorder_overwrite_first_run(temp_copy_of_example_module_sco
     # than create a new file
     driver_config["recorder"].update({"overwrite_recorder": True})
     driver_config["driver"]["optimization"]["max_iter"] = 5  # to prevent tests taking too long
+    driver_config["recorder"]["includes"] = ["finance_subgroup_hydrogen.LCOH"]
 
     # reset the driver config in H2I
     h2i.driver_config = driver_config
@@ -255,6 +258,7 @@ def test_output_new_recorder_filename_third_run(temp_copy_of_example_module_scop
     output_folder = example_folder / driver_config["general"]["folder_output"]
     driver_config["recorder"]["file"] = filename_initial
     driver_config["driver"]["optimization"]["max_iter"] = 5  # to prevent tests taking too long
+    driver_config["recorder"]["includes"] = ["finance_subgroup_hydrogen.LCOH"]
 
     # reset the driver config in H2I
     h2i.driver_config = driver_config

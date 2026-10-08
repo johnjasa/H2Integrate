@@ -1,8 +1,26 @@
-# Example 23: Solar Battery Grid System
+# Example 24: Solar Battery Grid System
 
 ## Overview
 
 This example demonstrates a solar + battery + grid system that showcases the unified grid component. The system can both buy electricity from the grid and sell excess electricity back to the grid using separate grid connection instances.
+
+## Battery Investment Tax Credit
+
+The battery receives a 40% investment tax credit (ITC) in the ProFastLCO calculation.
+In `tech_config.yaml`, the battery's `model_inputs` includes:
+
+```yaml
+financial_parameters:
+   capital_items:
+      investment_tax_credit: 0.4
+```
+
+ProFAST applies the credit as a one-time capital incentive equal to 40% of the battery's
+initial total adjusted CapEx, excluding replacement costs. With the current battery sizing,
+the $62.5 million CapEx produces a $25 million credit. No credit is applied to solar or grid
+capital costs. The resulting LCOE is approximately $89.98/MWh, compared with $91.71/MWh
+without the battery ITC. Set the rate to `0.0` or remove it to disable the credit. The same
+technology-specific setting is supported by ProFastNPV.
 
 ## System Description
 

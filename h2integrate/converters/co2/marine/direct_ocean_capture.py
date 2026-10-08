@@ -2,7 +2,7 @@ from attrs import field, define, validators
 from mcm.capture import echem_mcc
 
 from h2integrate.core.utilities import BaseConfig, merge_shared_inputs
-from h2integrate.core.model_baseclasses import CostModelBaseClass, PerformanceModelBaseClass
+from h2integrate.core.model_baseclass import CostModelBaseClass, PerformanceModelBaseClass
 
 
 def setup_electrodialysis_inputs(config):
@@ -111,7 +111,7 @@ class DOCPerformanceModel(PerformanceModelBaseClass):
     def compute(self, inputs, outputs):
         ED_inputs = setup_electrodialysis_inputs(self.config)
 
-        co_2_outputs, range_outputs, ed_outputs = echem_mcc.run_electrodialysis_physics_model(
+        _co_2_outputs, range_outputs, ed_outputs = echem_mcc.run_electrodialysis_physics_model(
             power_profile_w=inputs["electricity_in"],
             initial_tank_volume_m3=self.config.initial_tank_volume_m3,
             electrodialysis_config=ED_inputs,
