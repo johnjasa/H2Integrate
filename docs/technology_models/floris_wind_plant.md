@@ -20,7 +20,10 @@ Turbulence intensity can be taken from the resource data or supplied as a defaul
 FLORIS calculations can be expensive for larger wind farms and more complicated wake models, so caching is enabled by default. `cache_dir` selects the
 cache location when caching is enabled. Cache entries are based on the model configuration and
 simulation inputs; disable caching with `enable_caching: false` when debugging or when cache reuse
-is not desired.
+is not desired. FLORIS uses a versioned key that includes complete serialized input arrays and
+runtime configuration; older repr-based cache files are not reused. Input and configuration
+values must be pickleable. Cache keys do not automatically change after FLORIS or other
+dependency upgrades, so clear the cache when upgrading those dependencies.
 
 (turbine-file-preprocessing)=
 ## Turbine file preprocessing

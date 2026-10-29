@@ -1,9 +1,249 @@
+from copy import deepcopy
+from unittest.mock import patch
+
+import numpy as np
 import pytest
+import ProFAST
 import openmdao.api as om
 from pytest import fixture
+from openmdao.utils.assert_utils import assert_check_totals, assert_check_partials
 
 from h2integrate.finances.profast_lco import ProFastLCO
 from h2integrate.finances.profast_baseclass import BasicProFASTParameterConfig
+
+
+def _derivative_problem(model_inputs, mode="fwd", component_totals=True, output_dir=None):
+    finance_inputs = deepcopy(model_inputs)
+    plant_life = 10 if output_dir is not None else 3
+    if output_dir is not None:
+        finance_inputs.update(save_profast_config=True, save_profast_results=True)
+    plant_config = {
+        "plant": {"plant_life": plant_life},
+        "finance_parameters": {"model_inputs": finance_inputs},
+    }
+    driver = {
+        "driver": {
+            "optimization": {
+                "flag": True,
+                "total_derivatives": "components" if component_totals else "fd",
+            }
+        },
+        "general": {"folder_output": str(output_dir)},
+    }
+    tech_config = {
+        "wind": {
+            "model_inputs": {
+                "financial_parameters": {"capital_items": {"replacement_cost_percent": 0.2}}
+            }
+        },
+        "solar": {"model_inputs": {}},
+    }
+    prob = om.Problem(reports=False)
+    ivc = om.IndepVarComp()
+    ivc.add_output("rated_electricity_production", 500000.0, units="kW")
+    ivc.add_output("capacity_factor", [0.8, 0.75, 0.7] + [0.7] * (plant_life - 3), units="unitless")
+    prob.model.add_subsystem("ivc", ivc, promotes=["*"])
+    prob.model.add_subsystem(
+        "pf",
+        ProFastLCO(
+            driver_config=driver,
+            plant_config=plant_config,
+            tech_config=tech_config,
+            commodity_type="electricity",
+        ),
+        promotes=["rated_electricity_production", "capacity_factor"],
+    )
+    prob.setup(mode=mode)
+    for name, value in {
+        "capex_adjusted_wind": 950054634.1,
+        "opex_adjusted_wind": 21093892.68,
+        "varopex_adjusted_wind": [2000000.0, 2100000.0, 2200000.0],
+        "replacement_schedule_wind": [0.0, 0.5, 0.25],
+        "capex_adjusted_solar": 6561339.6,
+        "opex_adjusted_solar": 88372.77,
+        "varopex_adjusted_solar": [300000.0, 320000.0, 340000.0],
+    }.items():
+        if isinstance(value, list):
+            extension = 0.0 if name.startswith("replacement_schedule") else value[-1]
+            value = value + [extension] * (plant_life - 3)
+        prob.set_val(f"pf.{name}", value)
+    return prob
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("mode", ["fwd", "rev"])
+@pytest.mark.parametrize("coproduct", [False, True])
+def test_profast_light_partials_match_full_compute(profast_inputs_no1, mode, coproduct):
+    if coproduct:
+        profast_inputs_no1["params"]["inflation_rate"] = 0.02
+        profast_inputs_no1["params"]["sales_tax_rate"] = 0.07
+    prob = _derivative_problem(profast_inputs_no1, mode=mode)
+    if coproduct:
+        prob.set_val("pf.varopex_adjusted_wind", [-2000000.0, -2100000.0, -2200000.0])
+    prob.run_model()
+    for _ in range(2):
+        partials = prob.check_partials(
+            out_stream=None, method="fd", step=1e-5, step_calc="rel_avg", minimum_step=1e-6
+        )
+        lco_partials = {
+            "pf": {key: value for key, value in partials["pf"].items() if key[0] == "LCOE"}
+        }
+        assert_check_partials(lco_partials, atol=1e-9, rtol=1e-6)
+        totals = prob.check_totals(
+            of=["pf.LCOE"],
+            wrt=[
+                "rated_electricity_production",
+                "capacity_factor",
+                "pf.capex_adjusted_wind",
+                "pf.opex_adjusted_wind",
+                "pf.varopex_adjusted_wind",
+                "pf.replacement_schedule_wind",
+            ],
+            out_stream=None,
+            method="fd",
+            step=1e-5,
+            step_calc="rel_avg",
+        )
+        assert_check_totals(totals, atol=1e-8, rtol=1e-6)
+        prob.set_val("pf.capex_adjusted_wind", 700000000.0)
+        prob.set_val("capacity_factor", [0.7, 0.65, 0.6])
+        prob.set_val("pf.replacement_schedule_wind", [0.3, 0.2, 0.1])
+        prob.model.pf.params.discount_rate = 0.12
+        prob.run_model()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("mode", ["fwd", "rev"])
+def test_profast_partials_preserve_primal_and_exports(profast_inputs_no1, tmp_path, mode):
+    prob = _derivative_problem(profast_inputs_no1, mode=mode, output_dir=tmp_path)
+    reference = _derivative_problem(
+        profast_inputs_no1, mode=mode, component_totals=False, output_dir=tmp_path
+    )
+    prob.run_model()
+    exports = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+    reference.run_model()
+    names = [
+        "LCOE",
+        "price_electricity",
+        "wacc_electricity",
+        "crf_electricity",
+        "irr_electricity",
+        "profit_index_electricity",
+        "investor_payback_period_electricity",
+    ]
+    for name in names:
+        np.testing.assert_array_equal(prob.get_val(f"pf.{name}"), reference.get_val(f"pf.{name}"))
+    breakdown = deepcopy(prob.get_val("pf.LCOE_breakdown"))
+    assert breakdown == reference.get_val("pf.LCOE_breakdown")
+    assert len(exports) == 3
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == exports
+
+    with patch("h2integrate.finances.profast_lco.run_profast") as full_run:
+        totals = prob.compute_totals(
+            of=["pf.LCOE"],
+            wrt=["pf.capex_adjusted_wind", "capacity_factor"],
+            return_format="array",
+        )
+    full_run.assert_not_called()
+    assert np.all(np.isfinite(totals))
+    for name in names:
+        np.testing.assert_array_equal(prob.get_val(f"pf.{name}"), reference.get_val(f"pf.{name}"))
+    assert prob.get_val("pf.LCOE_breakdown") == breakdown
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == exports
+    prob.run_model()
+    assert prob.get_val("pf.LCOE_breakdown") == breakdown
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == exports
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("component_totals", [False, True])
+def test_profast_whole_model_fd_runs_full_compute(profast_inputs_no1, component_totals, tmp_path):
+    prob = _derivative_problem(
+        profast_inputs_no1, component_totals=component_totals, output_dir=tmp_path
+    )
+    prob.model.approx_totals(method="fd", step=1000.0)
+    prob.run_model()
+    baseline = prob.get_val("pf.LCOE")[0]
+    prob.set_val("pf.capex_adjusted_wind", 950055634.1)
+    prob.run_model()
+    expected = (prob.get_val("pf.LCOE")[0] - baseline) / 1000.0
+    prob.set_val("pf.capex_adjusted_wind", 950054634.1)
+    prob.run_model()
+    from h2integrate.finances.profast_lco import (
+        run_profast,
+        format_profast_price_breakdown_per_year,
+    )
+
+    with (
+        patch("h2integrate.finances.profast_lco.run_profast", wraps=run_profast) as full_run,
+        patch(
+            "h2integrate.finances.profast_lco.format_profast_price_breakdown_per_year",
+            wraps=format_profast_price_breakdown_per_year,
+        ) as export,
+    ):
+        total = prob.compute_totals(of=["pf.LCOE"], wrt=["pf.capex_adjusted_wind"])
+    assert full_run.call_count > 0
+    assert export.call_count == full_run.call_count
+    assert total["pf.LCOE", "pf.capex_adjusted_wind"][0, 0] == pytest.approx(expected)
+
+
+@pytest.mark.unit
+def test_profast_partials_invalid_production_and_solver_errors(profast_inputs_no1):
+    prob = _derivative_problem(profast_inputs_no1)
+    prob.set_val("rated_electricity_production", -1.0)
+    with pytest.warns(UserWarning, match="zero capacity"):
+        prob.run_model()
+    with pytest.warns(UserWarning, match="zero capacity"):
+        total = prob.compute_totals(of=["pf.LCOE"], wrt=["pf.capex_adjusted_wind"])
+    assert total["pf.LCOE", "pf.capex_adjusted_wind"][0, 0] == 0.0
+    prob.set_val("rated_electricity_production", 500000.0)
+    prob.set_val("capacity_factor", [0.0, 0.0, 0.0])
+    with pytest.warns(UserWarning, match="zero capacity factor"):
+        prob.run_model()
+    with pytest.warns(UserWarning, match="zero capacity factor"):
+        total = prob.compute_totals(of=["pf.LCOE"], wrt=["pf.capex_adjusted_wind"])
+    assert total["pf.LCOE", "pf.capex_adjusted_wind"][0, 0] == 0.0
+    prob.set_val("capacity_factor", [0.8, 0.75, 0.7])
+    prob.run_model()
+    with patch.object(prob.model.pf, "populate_profast", side_effect=RuntimeError("solver failed")):
+        with pytest.raises(RuntimeError, match="solver failed"):
+            prob.compute_totals(of=["pf.LCOE"], wrt=["pf.capex_adjusted_wind"])
+    prob.run_model()
+    assert np.isfinite(prob.get_val("pf.LCOE")[0])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("mode", ["fwd", "rev"])
+def test_profast_relevance_changes_between_totals(profast_inputs_no1, mode):
+    prob = _derivative_problem(profast_inputs_no1, mode=mode)
+    prob.run_model()
+    original_solve = ProFAST.ProFAST.solve_price
+    counts = []
+
+    def count_solve(pf):
+        counts.append(1)
+        return original_solve(pf)
+
+    for wrt, expected_calls in [
+        ("pf.capex_adjusted_wind", 2),
+        ("capacity_factor", 4),
+        ("pf.varopex_adjusted_wind", 4),
+        ("pf.capex_adjusted_solar", 2),
+        ("pf.capex_adjusted_wind", 2),
+    ]:
+        counts.clear()
+        with patch.object(ProFAST.ProFAST, "solve_price", count_solve):
+            prob.compute_totals(of=["pf.LCOE"], wrt=[wrt])
+        assert len(counts) == expected_calls
+        totals = prob.check_totals(
+            of=["pf.LCOE"],
+            wrt=[wrt],
+            out_stream=None,
+            method="fd",
+            step=1e-5,
+            step_calc="rel_avg",
+        )
+        assert_check_totals(totals, atol=1e-8, rtol=1e-6)
 
 
 @fixture

@@ -1,4 +1,6 @@
 import copy
+import pickle
+import hashlib
 
 import numpy as np
 from attrs import field, define, validators
@@ -228,10 +230,43 @@ class FlorisWindPlantPerformanceModel(WindPerformanceBaseClass, CacheBaseClass):
 
         return time_series
 
+    def make_cache_hash_filename(self, config, inputs, discrete_inputs={}):
+        """Hash complete serialized inputs for the versioned FLORIS cache.
+
+        Legacy repr-based entries are intentionally not reused: truncated arrays
+        can make different resource or command time series share the same key.
+        """
+        buffers_digest = hashlib.sha256()
+
+        def add_buffer(buffer):
+            data = buffer.raw()
+            buffers_digest.update(len(data).to_bytes(8, "big"))
+            buffers_digest.update(data)
+
+        payload = pickle.dumps(
+            (config, dict(inputs.items()), dict(discrete_inputs.items())),
+            protocol=5,
+            buffer_callback=add_buffer,
+        )
+        digest = hashlib.sha256(payload)
+        digest.update(buffers_digest.digest())
+        return self.config.cache_dir / f"floris-v2-{digest.hexdigest()}.pkl"
+
     def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
         # 1. Check if the results for the current configuration are already cached
-        config_dict = self.config.as_dict()
-        config_dict.update({"wind_turbine_size_kw": self.wind_turbine_rating_kW})
+        config_dict = {}
+        if self.config.enable_caching:
+            config_dict = {
+                "config": self.config,
+                "wind_turbine_size_kw": self.wind_turbine_rating_kW,
+                "layout_mode": self.layout_mode,
+                "layout_config": self.layout_config,
+                "n_timesteps": self.n_timesteps,
+                "dt": self.dt,
+                "plant_life": self.plant_life,
+                "fraction_of_year_simulated": self.fraction_of_year_simulated,
+                "system_level_control": "system_level_control" in self.options["plant_config"],
+            }
         loaded_results = self.load_outputs(
             inputs, outputs, discrete_inputs, discrete_outputs={}, config_dict=config_dict
         )

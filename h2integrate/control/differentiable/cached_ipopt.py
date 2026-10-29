@@ -92,6 +92,7 @@ class CachedIpopt:
         self._lower_hess = self._hess.row >= self._hess.col
         self._callback_errors = []
         self._callbacks = self._create_callbacks()
+        self._previous_multipliers = None
 
     def set_options(self, options: dict) -> None:
         """Set the options to use on the next solve."""
@@ -280,7 +281,12 @@ class CachedIpopt:
         if not problem:
             raise RuntimeError("Ipopt could not create the cached problem.")
         try:
-            for name, value in self.options.items():
+            options = self.options.copy()
+            warm_start_enabled = options.get("warm_start_init_point") == "yes"
+            use_warm_start = warm_start_enabled and self._previous_multipliers is not None
+            if warm_start_enabled and not use_warm_start:
+                options["warm_start_init_point"] = "no"
+            for name, value in options.items():
                 key = name.encode("utf-8")
                 if isinstance(value, str):
                     success = self._lib.AddIpoptStrOption(problem, key, value.encode("utf-8"))
@@ -297,8 +303,11 @@ class CachedIpopt:
             x[parameter_indices] = values
             constraint_values = np.zeros(m)
             objective = np.zeros(1)
-            duals = np.zeros(m)
-            z_lower, z_upper = np.zeros(n), np.zeros(n)
+            if use_warm_start:
+                duals, z_lower, z_upper = (value.copy() for value in self._previous_multipliers)
+            else:
+                duals = np.zeros(m)
+                z_lower, z_upper = np.zeros(n), np.zeros(n)
             self._callback_errors.clear()
             status = self._lib.IpoptSolve(
                 problem,
@@ -311,6 +320,7 @@ class CachedIpopt:
                 None,
             )
             if self._callback_errors:
+                self._previous_multipliers = None
                 error = self._callback_errors[0]
                 if not isinstance(error, Exception):
                     raise error
@@ -318,9 +328,14 @@ class CachedIpopt:
                     "Cached Ipopt could not evaluate the nonlinear program."
                 ) from error
             if status != 0:
+                self._previous_multipliers = None
                 raise RuntimeError(f"Cached Ipopt did not converge (status {status}).")
             if not all(np.all(np.isfinite(v)) for v in (x, duals, z_lower, z_upper)):
+                self._previous_multipliers = None
                 raise RuntimeError("Cached Ipopt returned nonfinite primal or multiplier values.")
+            self._previous_multipliers = (
+                (duals.copy(), z_lower.copy(), z_upper.copy()) if warm_start_enabled else None
+            )
             return x, duals, z_lower, z_upper
         finally:
             self._lib.FreeIpoptProblem(problem)

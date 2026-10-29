@@ -112,6 +112,9 @@ and PEM component derivatives currently require full-horizon simulation and
 `derivative_mode: fwd`. For cost models explicitly marked as having a constant cost year, component mode uses
 the configured year as an independent constant in the finance chain. Change the configured
 year before building the model rather than changing the cost model's discrete output afterward.
+For component totals, ProFAST approximates LCO partials using LCO-only evaluations; normal
+model runs still produce the full financial outputs and reports. The partials remain finite
+differences and should be checked near changes in replacement schedules or other discontinuities.
 
 ## Design variables
 

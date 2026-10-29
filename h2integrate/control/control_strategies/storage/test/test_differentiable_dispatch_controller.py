@@ -198,8 +198,28 @@ def test_rolling_matches_full_horizon_when_window_is_full():
 @pytest.mark.skipif(
     not cached_ipopt_available(), reason="the Ipopt shared library is not available"
 )
+def test_one_week_dispatch_directional_derivatives():
+    problem = _build_problem(n=168, solver_backend="cached")
+    problem.run_model()
+    rng = np.random.default_rng(42)
+    _, base = _input_vector(problem)
+    direction = [rng.standard_normal(value.shape) for value in base]
+    np.testing.assert_allclose(
+        _jacvec(problem, direction),
+        _directional_fd(problem, direction),
+        rtol=2e-3,
+        atol=1e-4,
+    )
+    problem.cleanup()
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(
+    not cached_ipopt_available(), reason="the Ipopt shared library is not available"
+)
 @pytest.mark.parametrize("horizon_mode", ["full_horizon", "rolling"])
-def test_cached_solver_matches_shell_with_varying_penalties(horizon_mode):
+@pytest.mark.parametrize("warm_start", ["no", "yes"])
+def test_cached_solver_matches_shell_with_varying_penalties(horizon_mode, warm_start):
     settings = {
         "dispatch_horizon_mode": horizon_mode,
         "n_horizon_window": 8,
@@ -207,7 +227,11 @@ def test_cached_solver_matches_shell_with_varying_penalties(horizon_mode):
         "unmet_demand_penalty": np.linspace(20.0, 100.0, N_STEPS).tolist(),
     }
     shell = _build_problem(solver_backend="shell", **settings)
-    cached = _build_problem(solver_backend="cached", **settings)
+    cached = _build_problem(
+        solver_backend="cached",
+        solver_options={"warm_start_init_point": warm_start},
+        **settings,
+    )
     for rate in (10.0, 9.0):
         for problem in (shell, cached):
             problem.set_val("max_charge_rate", rate, units="MW")

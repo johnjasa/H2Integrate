@@ -69,14 +69,8 @@ class ProFastLCO(ProFastBase):
                         "replacement_schedule",
                     )
                 )
-            self.declare_partials(
-                self.LCO_str,
-                inputs,
-                method="fd",
-                step=1e-5,
-                step_calc="rel_avg",
-                minimum_step=1e-6,
-            )
+            self.declare_partials(self.LCO_str, inputs)
+            self._lco_derivative_inputs = inputs
 
     def add_model_specific_outputs(self):
         """Define output variables specific to the selected commodity.
@@ -132,19 +126,8 @@ class ProFastLCO(ProFastBase):
         self.price_units = io_meta_data[self.LCO_str]["units"]
         self.commodity_amount_units = simplify_unit(f"USD/({self.price_units})")
 
-        non_pos_prod = inputs[f"rated_{self.options['commodity_type']}_production"][0] <= 0
-        has_zero_cf = np.all(inputs["capacity_factor"] == 0.0)
-
-        if non_pos_prod or has_zero_cf:
-            bug_desc = "capacity" if non_pos_prod else "capacity factor"
+        if self._invalid_production(inputs):
             outputs[self.LCO_str] = 1e12
-            msg = (
-                f"Commodity stream for finance group has a zero {bug_desc}. "
-                "If you receive this warning multiple times, there may be a problem "
-                "with your setup. ProFAST is not being run on this iteration and the "
-                f"{self.LCO_str} is being set to default value of 1e12 ({self.price_units})"
-            )
-            warnings.warn(msg, UserWarning)
             return
 
         # populate ProFAST
@@ -202,3 +185,52 @@ class ProFastLCO(ProFastBase):
                 price_breakdown_formatted.to_csv(pf_breakdown_fpath)
                 lco_breakdown = dict_to_yaml_formatting(lco_breakdown)
                 write_yaml(lco_breakdown, lco_breakdown_fpath)
+
+    def _invalid_production(self, inputs):
+        non_pos_prod = inputs[f"rated_{self.options['commodity_type']}_production"][0] <= 0
+        has_zero_cf = np.all(inputs["capacity_factor"] == 0.0)
+        if non_pos_prod or has_zero_cf:
+            bug_desc = "capacity" if non_pos_prod else "capacity factor"
+            msg = (
+                f"Commodity stream for finance group has a zero {bug_desc}. "
+                "If you receive this warning multiple times, there may be a problem "
+                "with your setup. ProFAST is not being run on this iteration and the "
+                f"{self.LCO_str} is being set to default value of 1e12 ({self.price_units})"
+            )
+            warnings.warn(msg, UserWarning)
+            return True
+        return False
+
+    def compute_partials(self, inputs, partials):
+        """Approximate LCO partials without computing reports for perturbed inputs."""
+        if not component_totals_enabled(self.options):
+            return
+
+        values = {name: inputs[name].copy() for name in self._lco_derivative_inputs}
+
+        def lco():
+            if self._invalid_production(values):
+                return 1e12
+            return self.populate_profast(values).solve_price()["lco"]
+
+        # Match OpenMDAO's component-FD relevance filtering. Relevance is inactive during
+        # partial checks, in which case every declared input must be evaluated.
+        relevant_inputs = [
+            name
+            for name in self._lco_derivative_inputs
+            if self._relevance.is_relevant(f"{self.pathname}.{name}" if self.pathname else name)
+        ]
+        if not relevant_inputs:
+            return
+
+        baseline = lco()
+        for name in relevant_inputs:
+            original = values[name]
+            # Keep the original OpenMDAO FD rel_avg step and minimum step.
+            step = max(1e-5 * np.mean(np.abs(original)), 1e-6)
+            derivatives = np.empty(original.size)
+            for index in range(original.size):
+                original[index] += step
+                derivatives[index] = (lco() - baseline) / step
+                original[index] = inputs[name][index]
+            partials[self.LCO_str, name] = derivatives

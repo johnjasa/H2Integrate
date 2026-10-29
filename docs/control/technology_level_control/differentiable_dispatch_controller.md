@@ -118,11 +118,35 @@ Pyomo parameter triggers an NLP rebuild. Changing the objective, constraints, de
 bounds, or other fixed variables is unsupported; build a new adapter for those changes.
 Use `shell` if these restrictions or the shared-library requirement do not suit the model.
 
+For the cached backend, `solver_options: {warm_start_init_point: "yes"}` reuses the previous
+solution's constraint and bound multipliers along with the primal starting point. The first
+solve starts without multipliers, and a failed solve or NLP rebuild discards the saved
+multipliers. Warm starts can be slower or fail for some changes in inputs; they do not
+automatically relax the convergence requirements. They are not enabled in example 39 because,
+in a paired test at three nearby designs, primal-dual starts took longer than primal-only starts
+while producing matching outputs and totals.
+
 On one Windows run of example 39, the full-year SLSQP sizing study took 162 seconds with the
 cached backend versus 282 seconds with the shell backend, with the same reported design and
-evaluation counts. In a separate paired check with the current backend, a repeated model
-evaluation took 6.4 seconds cached versus 9.5 seconds with the shell. Timings depend on the
-machine and solver behavior.
+evaluation counts. After the FLORIS cache and ProFAST partial improvements, a subsequent run
+took about 140 seconds with the same design and evaluation counts. These individual timings
+depend on the machine and solver behavior.
+
+A short fixed generation profile can also be used with the controller directly. For example,
+a synthetic 168-hour dispatch was much faster than the corresponding 8760-hour dispatch in a
+local timing test. The separate `run_short_dispatch.py` example sizes storage using a fixed
+synthetic 168-hour electricity profile and an illustrative weekly cost proxy. It also accepts
+`--generation-csv` with 168 headerless, single-column hourly MW values. It uses the H2I storage
+controller and cost model, but not the complete plant, electrolyzer, or ProFAST.
+
+```console
+python run_short_dispatch.py --generation-csv generation.csv
+```
+
+This is not a one-week version of example 39's full TEA: in particular, the PEM lifetime
+calculations assume that their simulation period is close to a year. A short profile must not
+be interpreted as a representative annual finance case without addressing that assumption
+and the storage's inter-period state of charge.
 
 ## Configuration
 

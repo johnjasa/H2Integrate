@@ -205,10 +205,14 @@ def test_cached_solver_refreshes_mutable_parameters():
     model = _equality_qp()
     model.coefficient = pyo.Param(initialize=1.0, mutable=True)
     model.obj.set_value(model.obj.expr + model.coefficient * model.x1 * model.p)
-    sensitivity = KKTSensitivity(model, [model.p], solver_backend="cached")
+    sensitivity = KKTSensitivity(
+        model, [model.p], solver_backend="cached", solver_options={"warm_start_init_point": "yes"}
+    )
     first = sensitivity.solve([P0])
+    old_solver = sensitivity._cached_solver
     model.coefficient.set_value(2.0)
     second = sensitivity.solve([P0])
+    assert sensitivity._cached_solver is not old_solver
     assert first.x != pytest.approx(second.x, abs=1e-4)
     for coefficient, cached_solution in ((1.0, first), (2.0, second)):
         shell_model = _equality_qp()
@@ -323,3 +327,67 @@ def test_cached_solver_reports_unavailable_library(monkeypatch):
     model = _equality_qp()
     with pytest.raises(RuntimeError, match="no shared Ipopt library"):
         KKTSensitivity(model, [model.p], solver_backend="cached")
+
+
+@pytest.mark.unit
+@requires_cached_ipopt
+def test_cached_solver_warm_starts_primal_dual(monkeypatch, subtests):
+    models = [_bounded_qp(), _bounded_qp()]
+    warm, cold = [
+        KKTSensitivity(
+            model,
+            [model.p[0], model.p[1], model.p[2]],
+            barrier_mu=1e-4,
+            solver_backend="cached",
+            solver_options={"warm_start_init_point": mode},
+        )
+        for model, mode in zip(models, ("yes", "no"))
+    ]
+    library = warm._cached_solver._lib
+    original_solve = library.IpoptSolve
+    original_option = library.AddIpoptStrOption
+    starts = []
+    option_values = []
+
+    def capture_option(problem, name, value):
+        if name == b"warm_start_init_point":
+            option_values.append(value)
+        return original_option(problem, name, value)
+
+    def capture_solve(problem, x, g, objective, dual, lower, upper, user_data):
+        starts.append(
+            (
+                np.ctypeslib.as_array(dual, shape=(warm._nlp.n_constraints(),)).copy(),
+                np.ctypeslib.as_array(lower, shape=(warm._nlp.n_primals(),)).copy(),
+                np.ctypeslib.as_array(upper, shape=(warm._nlp.n_primals(),)).copy(),
+            )
+        )
+        return original_solve(problem, x, g, objective, dual, lower, upper, user_data)
+
+    monkeypatch.setattr(library, "AddIpoptStrOption", capture_option)
+    monkeypatch.setattr(library, "IpoptSolve", capture_solve)
+    for values in (np.array([3.0, 0.5, 1.2]), np.array([3.1, 0.6, 1.1])):
+        warm_solution = warm.solve(values)
+        cold_solution = cold.solve(values)
+        if len(starts) == 1:
+            first_multipliers = tuple(x.copy() for x in warm._cached_solver._previous_multipliers)
+        with subtests.test("solution and derivatives", values=values):
+            assert warm_solution.x == pytest.approx(cold_solution.x, abs=1e-7)
+            assert warm_solution.objective == pytest.approx(cold_solution.objective, abs=1e-8)
+            assert warm_solution.linearization.jacobian() == pytest.approx(
+                cold_solution.linearization.jacobian(), abs=1e-6
+            )
+    with subtests.test("warm-start inputs"):
+        assert option_values == [b"no", b"yes"]
+        assert all(np.count_nonzero(value) == 0 for value in starts[0])
+        for actual, expected in zip(starts[1], first_multipliers):
+            np.testing.assert_array_equal(actual, expected)
+
+    with subtests.test("failed solve clears saved multipliers"):
+        monkeypatch.setattr(library, "IpoptSolve", lambda *_args: 3)
+        with pytest.raises(RuntimeError, match="did not converge"):
+            warm.solve(np.array([3.2, 0.6, 1.1]))
+        assert warm._cached_solver._previous_multipliers is None
+        monkeypatch.setattr(library, "IpoptSolve", capture_solve)
+        warm.solve(np.array([3.0, 0.5, 1.2]))
+        assert option_values[-1] == b"no"

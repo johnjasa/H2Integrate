@@ -29,6 +29,7 @@
   - Added `examples/39_differentiable_dispatch`, which runs the example 13 plant with the new controller.
 - Added opt-in component-based total derivatives and mixed-derivative support for example 39's H2I optimization path. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
 - Added an optional cached in-process Ipopt backend for differentiable dispatch and enabled it in example 39. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
+- Improved FLORIS caching and ProFAST partial evaluation, added optional primal-dual Ipopt warm starts, and added a one-week dispatch-sizing diagnostic. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
 
 
 ## 0.10.0 [October 12, 2026]
