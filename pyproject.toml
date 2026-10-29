@@ -123,6 +123,7 @@ gis = [
   "reverse_geocoder"
 ]
 ard = ["ard-nrel", "optiwindnet<0.3.1"]
+dol = ["idaes-pse>=2.13", "torch"]
 extras = ["h2integrate[gis,ard]"]
 all = ["h2integrate[develop,extras,examples]"]
 

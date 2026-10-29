@@ -83,6 +83,10 @@ environment for development work.
 - Use one of the extra flags as needed:
   - `gis`: adds the iron mapping tools.
   - `ard`: adds the Ard-based wind models.
+  - `dol`: adds experimental differentiable optimization dependencies (IDAES, which provides
+    Ipopt and the Pyomo PyNumero libraries, and PyTorch). After installing, run
+    `idaes get-extensions` once to download the Ipopt and PyNumero binaries. This flag is not
+    included in `extras` or `all`.
   - `extras`: installs all extra analysis tool dependencies, e.g., `ard` or `gis`.
   - `develop`: adds developer and documentation tools.
   - `examples`: allows you to use the Jupyter Notebooks and all examples (includes `ard` and `gis`).
