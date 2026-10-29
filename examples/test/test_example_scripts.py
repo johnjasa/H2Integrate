@@ -20,12 +20,14 @@ HELPER_MODULES = {
     "03_methanol/co2_hydrogenation_doc/plot_co2h_methanol.py",
     "06_custom_tech/user_defined_model/paper_mill.py",
     "08_wind_electrolyzer/user_finance_model/simple_lco.py",
+    "39_differentiable_dispatch/sizing_problem.py",
 }
 
 # Scripts that need an optional dependency, mapped to the module that must be importable
 OPTIONAL_DEPENDENCIES = {
     "21_iron_examples/iron_mapping/run_iron.py": "geopandas",
     "29_wind_ard/run_windard_pv_battery.py": "ard",
+    "39_differentiable_dispatch/run_differentiable_dispatch.py": "idaes",
 }
 
 SCRIPT_TIMEOUT_SECONDS = 3600

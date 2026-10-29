@@ -3351,3 +3351,76 @@ def test_paper_mill_example(subtests, temp_copy_of_example):
         lignin_out = h2i.prob.get_val("paper_mill.lignin_out", units="kg/h")
         lignin_in = h2i.prob.get_val("saf.lignin_in", units="kg/h")
         np.testing.assert_allclose(lignin_in, lignin_out, rtol=1e-6)
+
+
+def _kkt_tools_available():
+    if importlib.util.find_spec("idaes") is None:
+        return False
+    from h2integrate.control.differentiable import kkt_tools_available
+
+    return kkt_tools_available()
+
+
+@pytest.mark.examples
+@pytest.mark.skipif(
+    not _kkt_tools_available(), reason="the dol extra (Ipopt and PyNumero) is not available"
+)
+@pytest.mark.parametrize(
+    "example_folder,resource_example_folder", [("39_differentiable_dispatch", None)]
+)
+def test_differentiable_dispatch_example(subtests, temp_copy_of_example):
+    example_folder = temp_copy_of_example
+
+    tech_config = load_tech_yaml(example_folder / "tech_config.yaml")
+    plant_config = load_plant_yaml(example_folder / "plant_config.yaml")
+    driver_config = load_driver_yaml(example_folder / "driver_config.yaml")
+    driver_config["general"]["folder_output"] = str(Path(example_folder / "outputs").absolute())
+    tech_config["technologies"]["distributed_wind_plant"]["model_inputs"]["performance_parameters"][
+        "cache_dir"
+    ] = example_folder / "cache"
+
+    h2i = H2IntegrateModel(
+        {
+            "plant_config": plant_config,
+            "technology_config": tech_config,
+            "driver_config": driver_config,
+        }
+    )
+    h2i.setup()
+    h2i.prob.set_val("battery.electricity_set_point", 6.0, units="MW")
+    h2i.prob.set_val("elec_load_demand.electricity_demand", 60.0, units="MW")
+    h2i.run()
+
+    with subtests.test("LCOH"):
+        lcoh = h2i.prob.get_val("finance_subgroup_hydrogen.LCOH", units="USD/kg")[0]
+        assert pytest.approx(lcoh, rel=1e-2) == 8.967
+
+    with subtests.test("Unmet battery set-point"):
+        unmet = h2i.prob.get_val("battery.dispatch_electricity_unmet_demand", units="MW").sum()
+        assert pytest.approx(unmet, rel=1e-2) == 1467.9
+
+    with subtests.test("Storage model follows the dispatch commands"):
+        command = h2i.prob.get_val("battery.electricity_command_value", units="MW")
+        storage_out = h2i.prob.get_val("battery.electricity_out", units="MW")
+        assert np.mean(np.abs(command - storage_out)) < 1e-2
+
+    spec = importlib.util.spec_from_file_location(
+        "sizing_problem", example_folder / "sizing_problem.py"
+    )
+    sizing_problem = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sizing_problem)
+    generation = h2i.prob.get_val("gen_combiner.electricity_out", units="MW")[: 24 * 7]
+
+    with subtests.test("Exact total derivatives match finite differences"):
+        prob = sizing_problem.build_sizing_problem(generation)
+        prob.run_model()
+        totals = prob.check_totals(out_stream=None, method="fd", step=1e-5, form="central")
+        for key, data in totals.items():
+            exact = data.get("J_rev", data.get("J_fwd"))
+            assert np.allclose(exact, data["J_fd"], rtol=1e-4, atol=1e-10), key
+
+    with subtests.test("Gradient-based sizing converges"):
+        prob = sizing_problem.build_sizing_problem(generation, optimizer="SLSQP")
+        prob.run_driver()
+        assert prob.driver.result.success
+        assert prob.get_val("electrolyzer_capacity_factor")[0] >= 0.6 - 1e-4

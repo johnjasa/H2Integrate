@@ -108,6 +108,7 @@ parts:
         sections:
           - file: control/technology_level_control/open-loop_controllers
           - file: control/technology_level_control/pyomo_controllers
+          - file: control/technology_level_control/differentiable_dispatch_controller
           - file: control/technology_level_control/controller_demonstrations
   - caption: Demand
     chapters:

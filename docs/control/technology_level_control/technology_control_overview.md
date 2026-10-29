@@ -14,7 +14,7 @@ If you add your own controller via `control_strategy` in the technology config, 
 
 ## Control frameworks
 
-There are two different systematic approaches, or frameworks, in H2Integrate for technology-level control: [open-loop](#open-loop-control) and [pyomo](#pyomo-control). These two frameworks are useful in different situations and have different impacts on the system and control strategies that can be implemented. Both control frameworks are focused on technology-level dispatching. The open-loop framework has logic that is applicable to both storage technologies and converter technologies and the pyomo framework is currently applicable to storage technologies. The technology-level storage controllers may curtail/discard commodity amounts exceeding the needs of the storage technology and the specified demand. However, any unused commodity may be connected to another down-stream component to avoid actual curtailment.
+There are three different systematic approaches, or frameworks, in H2Integrate for technology-level control: [open-loop](#open-loop-control), [pyomo](#pyomo-control), and [differentiable optimization](#differentiable-dispatch-control). These two frameworks are useful in different situations and have different impacts on the system and control strategies that can be implemented. Both control frameworks are focused on technology-level dispatching. The open-loop framework has logic that is applicable to both storage technologies and converter technologies and the pyomo framework is currently applicable to storage technologies. The technology-level storage controllers may curtail/discard commodity amounts exceeding the needs of the storage technology and the specified demand. However, any unused commodity may be connected to another down-stream component to avoid actual curtailment.
 
 (open-loop-control-framework)=
 ## Open-loop control framework
@@ -36,3 +36,7 @@ Supported controllers:
 - [`HeuristicLoadFollowingStorageController`](#heuristic-load-following-controller)
 - [`OptimizedDispatchController`](#optimized-load-following-controller)
 - [`PeakLoadManagementOptimizedStorageController`](#optimized-demand-response-controller)
+
+(differentiable-control-framework)=
+## Differentiable optimization control
+The [`DifferentiableDispatchStorageController`](#differentiable-dispatch-control) uses the open-loop interface (it writes `<commodity>_command_value` for the storage performance model) but computes the dispatch by solving a smooth optimization problem with Ipopt. It also provides exact derivatives of the dispatch with respect to the storage design and the input profiles, by differentiating the problem's optimality conditions, so gradient-based optimizers can size storage while the dispatch is re-optimized for every design. It requires the optional `dol` dependencies.

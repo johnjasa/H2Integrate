@@ -24,6 +24,9 @@
 - Integrate the reliability model into the `SimpleCycleTurbinePerformanceModel` with independent
   samples for each turbine and correct multi-turbine fuel consumption. [PR 919](https://github.com/NatLabRockies/H2Integrate/pull/919)
 - Added an experimental `dol` optional dependency group (IDAES and PyTorch) and install notes to support upcoming differentiable optimization layer work. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
+- Added `DifferentiableDispatchStorageController`, an optimal storage controller that provides exact derivatives through its dispatch optimization, and the `KKTSensitivity` adapter that differentiates parametric Pyomo problems. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
+  - The controller is a drop-in replacement for `DemandOpenLoopStorageController`, with user-selectable full-horizon or rolling-horizon dispatch, quadratic and log-barrier smoothing, and adjoint, finite-difference, or no derivatives.
+  - Added `examples/39_differentiable_dispatch`, which runs the example 13 plant with the new controller and sizes the battery and electrolyzer with exact gradients through the dispatch.
 
 
 ## 0.10.0 [October 12, 2026]

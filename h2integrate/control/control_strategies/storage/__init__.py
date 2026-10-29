@@ -1,6 +1,9 @@
 from h2integrate.control.control_strategies.storage.demand_openloop_storage_controller import (
     DemandOpenLoopStorageController,
 )
+from h2integrate.control.control_strategies.storage.differentiable_dispatch_controller import (
+    DifferentiableDispatchStorageController,
+)
 from h2integrate.control.control_strategies.storage.heuristic_pyomo_controller import (
     HeuristicLoadFollowingStorageController,
 )
