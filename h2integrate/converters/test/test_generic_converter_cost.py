@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 import openmdao.api as om
 from pytest import fixture
+from openmdao.utils.assert_utils import assert_check_partials
 
 from h2integrate.core.utilities import merge_shared_inputs
 from h2integrate.converters.generic_converter_cost import (
@@ -37,6 +38,32 @@ def model_inputs():
         "cost_year": 2022,
     }
     return {"cost_parameters": tech_config}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("fractional_opex", [True, False])
+def test_generic_converter_cost_partials(plant_config, model_inputs, fractional_opex):
+    settings = model_inputs["cost_parameters"]
+    settings["unit_varopex"] = 2.0
+    if not fractional_opex:
+        settings["opex_fraction"] = None
+        settings["unit_opex"] = 3.0
+    prob = om.Problem(reports=False)
+    prob.model.add_subsystem(
+        "cost",
+        GenericConverterCostModel(
+            plant_config=plant_config, tech_config={"model_inputs": model_inputs}
+        ),
+    )
+    prob.setup()
+    prob.set_val("cost.rated_hydrogen_production", 4.0)
+    prob.set_val("cost.annual_hydrogen_produced", np.arange(30) + 1.0)
+    prob.run_model()
+    assert_check_partials(
+        prob.check_partials(out_stream=None, method="fd", form="central", step=1e-4),
+        atol=1e-7,
+        rtol=1e-7,
+    )
 
 
 @pytest.mark.unit

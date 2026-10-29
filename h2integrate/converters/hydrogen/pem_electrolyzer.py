@@ -1,9 +1,10 @@
 import math
 
 import numpy as np
+import openmdao.api as om
 from attrs import field, define, validators
 
-from h2integrate.core.utilities import merge_shared_inputs
+from h2integrate.core.utilities import merge_shared_inputs, component_totals_enabled
 from h2integrate.core.model_baseclass import ResizeablePerformanceModelBaseConfig
 from h2integrate.core.supported_models import register
 from h2integrate.converters.hydrogen.utilities import size_electrolyzer_for_hydrogen_demand
@@ -107,6 +108,7 @@ class ECOElectrolyzerPerformanceModel(ElectrolyzerPerformanceBaseClass):
         self.add_input("cluster_size", val=-1.0, units="MW")
         self.add_input("max_hydrogen_capacity", val=1000.0, units="kg/h")
         # TODO: add feedstock inputs and consumption outputs
+        self.matrix_free = component_totals_enabled(self.options)
 
     def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
         electrolyzer_size_mw = inputs["n_clusters"][0] * self.config.cluster_rating_MW
@@ -254,3 +256,58 @@ class ECOElectrolyzerPerformanceModel(ElectrolyzerPerformanceBaseClass):
             outputs["capacity_factor"] = outputs["capacity_factor"] * annual_scale
 
         outputs["total_hydrogen_produced"] = outputs["hydrogen_out"].sum()
+
+    def compute_jacvec_product(self, inputs, d_inputs, d_outputs, mode, discrete_inputs=None):
+        """Approximate the PEM model's power-profile directional derivative in forward mode."""
+        if mode != "fwd":
+            raise om.AnalysisError(
+                "ECOElectrolyzerPerformanceModel component derivatives currently require "
+                "derivative_mode: fwd."
+            )
+        if discrete_inputs["size_mode"] != "normal":
+            raise om.AnalysisError(
+                "ECOElectrolyzerPerformanceModel component derivatives currently require "
+                "size_mode: normal."
+            )
+        for name in (
+            "n_clusters",
+            "timestep_index",
+            "cluster_size",
+            "max_hydrogen_capacity",
+            "max_feedstock_ratio",
+            "max_commodity_ratio",
+            "hydrogen_command_value",
+        ):
+            if name in d_inputs and np.any(d_inputs[name]):
+                raise om.AnalysisError(
+                    f"ECOElectrolyzerPerformanceModel component derivatives with respect to "
+                    f"{name} are not supported; cluster sizing and resizing can be discrete."
+                )
+        names = ("electricity_in",)
+        directions = {
+            name: np.asarray(d_inputs[name])
+            for name in names
+            if name in d_inputs and np.any(d_inputs[name])
+        }
+        if not directions:
+            return
+
+        step = min(
+            1e-7 * max(1.0, float(np.max(np.abs(inputs[name])))) / float(np.max(np.abs(direction)))
+            for name, direction in directions.items()
+        )
+        perturbed_inputs = {name: np.array(value, copy=True) for name, value in inputs.items()}
+        outputs = []
+        for sign in (1.0, -1.0):
+            for name, direction in directions.items():
+                perturbed_inputs[name] = inputs[name] + sign * step * direction
+            perturbed_outputs = {
+                name: np.array(value, copy=True) for name, value in self._outputs.items()
+            }
+            self.compute(perturbed_inputs, perturbed_outputs, discrete_inputs, {})
+            outputs.append(perturbed_outputs)
+        for name in d_outputs:
+            derivative = (np.asarray(outputs[0][name]) - np.asarray(outputs[1][name])) / (2 * step)
+            if not np.all(np.isfinite(derivative)):
+                raise om.AnalysisError(f"Nonfinite PEM directional derivative for {name}.")
+            d_outputs[name] += derivative

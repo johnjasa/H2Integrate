@@ -58,6 +58,15 @@ class AdjustedCapexOpexComp(om.ExplicitComponent):
             self.add_output(f"opex_adjusted_{tech}", val=0.0, units="USD/year")
             self.add_output(f"varopex_adjusted_{tech}", val=0.0, shape=plant_life, units="USD/year")
 
+            for kind in ("capex", "opex", "varopex"):
+                indices = np.arange(plant_life) if kind == "varopex" else np.zeros(1, dtype=int)
+                self.declare_partials(
+                    f"{kind}_adjusted_{tech}", f"{kind}_{tech}", rows=indices, cols=indices
+                )
+                self.declare_partials(
+                    f"total_{kind}_adjusted", f"{kind}_{tech}", rows=indices, cols=indices
+                )
+
         self.add_output("total_capex_adjusted", val=0.0, units="USD")
         self.add_output("total_opex_adjusted", val=0.0, units="USD/year")
         self.add_output("total_varopex_adjusted", val=0.0, shape=plant_life, units="USD/year")
@@ -85,6 +94,14 @@ class AdjustedCapexOpexComp(om.ExplicitComponent):
         outputs["total_capex_adjusted"] = total_capex_adjusted
         outputs["total_opex_adjusted"] = total_opex_adjusted
         outputs["total_varopex_adjusted"] = total_varopex_adjusted
+
+    def compute_partials(self, inputs, partials, discrete_inputs):
+        for tech in self.options["tech_configs"]:
+            periods = self.target_dollar_year - int(discrete_inputs[f"cost_year_{tech}"])
+            factor = (1.0 + self.inflation_rate) ** periods
+            for kind in ("capex", "opex", "varopex"):
+                partials[f"{kind}_adjusted_{tech}", f"{kind}_{tech}"] = factor
+                partials[f"total_{kind}_adjusted", f"{kind}_{tech}"] = factor
 
 
 class AdjustedCapacityFactorComp(om.ExplicitComponent):

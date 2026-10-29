@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 from openmdao.utils.units import simplify_unit
 
+from h2integrate.core.utilities import component_totals_enabled
 from h2integrate.finances.tools import _compute_price_units
 from h2integrate.core.dict_utils import dict_to_yaml_formatting
 from h2integrate.tools.profast_tools import (
@@ -53,6 +54,29 @@ class ProFastLCO(ProFastBase):
         - The computation relies on ``run_profast()`` for the core financial simulation and
           ``make_price_breakdown()`` for cost disaggregation.
     """
+
+    def setup(self):
+        super().setup()
+        if component_totals_enabled(self.options):
+            inputs = [f"rated_{self.options['commodity_type']}_production", "capacity_factor"]
+            for tech in self.options["tech_config"]:
+                inputs.extend(
+                    f"{name}_{tech}"
+                    for name in (
+                        "capex_adjusted",
+                        "opex_adjusted",
+                        "varopex_adjusted",
+                        "replacement_schedule",
+                    )
+                )
+            self.declare_partials(
+                self.LCO_str,
+                inputs,
+                method="fd",
+                step=1e-5,
+                step_calc="rel_avg",
+                minimum_step=1e-6,
+            )
 
     def add_model_specific_outputs(self):
         """Define output variables specific to the selected commodity.

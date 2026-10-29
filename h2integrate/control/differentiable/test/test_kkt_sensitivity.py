@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 import pyomo.environ as pyo
+from pyomo.opt import SolverResults
 
 from h2integrate.control.differentiable.kkt_sensitivity import KKTSensitivity, kkt_tools_available
 
@@ -140,3 +141,21 @@ def test_infeasible_problem_raises():
     sens = KKTSensitivity(m, [m.p])
     with pytest.raises(RuntimeError):
         sens.solve([-1.0])
+
+
+@pytest.mark.unit
+def test_stalled_solver_is_not_treated_as_optimal(monkeypatch):
+    model = _equality_qp()
+    sensitivity = KKTSensitivity(model, [model.p])
+    results = pyo.SolverFactory("ipopt")
+
+    def stalled(*args, **kwargs):
+        response = SolverResults()
+        response.solver.termination_condition = pyo.TerminationCondition.internalSolverError
+        response.solver.message = "Search Direction becomes Too Small"
+        return response
+
+    monkeypatch.setattr(results, "solve", stalled)
+    sensitivity._solver = results
+    with pytest.raises(RuntimeError, match="Search Direction becomes Too Small"):
+        sensitivity.solve([P0])

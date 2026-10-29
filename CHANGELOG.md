@@ -26,7 +26,8 @@
 - Added an experimental `dol` optional dependency group (IDAES and PyTorch) and install notes to support upcoming differentiable optimization layer work. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
 - Added `DifferentiableDispatchStorageController`, an optimal storage controller that provides exact derivatives through its dispatch optimization, and the `KKTSensitivity` adapter that differentiates parametric Pyomo problems. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
   - The controller is a drop-in replacement for `DemandOpenLoopStorageController`, with user-selectable full-horizon or rolling-horizon dispatch, quadratic and log-barrier smoothing, and adjoint, finite-difference, or no derivatives.
-  - Added `examples/39_differentiable_dispatch`, which runs the example 13 plant with the new controller and sizes the battery and electrolyzer with exact gradients through the dispatch.
+  - Added `examples/39_differentiable_dispatch`, which runs the example 13 plant with the new controller.
+- Added opt-in component-based total derivatives and mixed-derivative support for example 39's H2I optimization path. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
 
 
 ## 0.10.0 [October 12, 2026]

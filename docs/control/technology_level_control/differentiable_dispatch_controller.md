@@ -80,10 +80,10 @@ The `derivatives` option selects how OpenMDAO gets partial derivatives:
 - `fd`: finite-difference partials on this component.
 - `none`: no partials, for analysis-only runs.
 
-H2I's optimization driver currently approximates total derivatives of the whole model with
-finite differences, so the exact partials are used when the controller is part of a problem
-whose other components also provide partials, as in example 39's sizing study. Extending exact
-derivatives to the rest of the H2I model chain is planned follow-on work.
+H2I's optimization driver defaults to whole-model finite differences. To use these derivatives
+in a YAML-driven optimization, select `total_derivatives: components`. Every component on the
+objective and constraint paths must supply valid partials; missing partials are treated as zero.
+Example 39 uses a mixture of analytic, KKT, and component-level finite-difference derivatives.
 
 ## Dispatch horizon
 
@@ -130,24 +130,33 @@ The battery in `examples/39_differentiable_dispatch` uses this controller:
 ## Example: gradient-based sizing through the dispatch
 
 `examples/39_differentiable_dispatch/run_differentiable_dispatch.py` first runs the example 13
-plant (wind and solar, battery, electrolyzer) with this controller. It then sizes the battery
-energy, battery power, and electrolyzer rating for the lowest levelized cost of hydrogen, subject
-to a minimum electrolyzer capacity factor of 0.6. A linear electrolyzer and a simple annualized
-LCOH provide analytic partials, so the problem has exact total derivatives end to end.
+plant (wind and solar, battery, electrolyzer) with this controller. It then optimizes the
+battery energy, battery power, and solar DC rating in the actual H2I plant using
+`driver_config_optimization.yaml`. The objective is ProFAST LCOH, with a 0.5 first-year PEM
+capacity-factor constraint. This differs from the old simplified demo's 0.6 constraint: the
+full H2I plant reaches about 0.54 even at the 120 MW solar and 500 MWh battery bounds. The
+script starts from a feasible design with 90 MW of solar, runs SLSQP by default, and accepts
+`--compare-cobyla` to also run gradient-free COBYLA.
 
-The script checks the exact total derivatives against finite differences, which agree to about
-six significant figures. It then compares gradient-based SLSQP with gradient-free COBYLA:
+This is a **mixed-derivative**, not an entirely exact, chain. The cable, combiners, demand,
+storage performance, cost models, and cost-year adjustment provide analytic or piecewise analytic
+partials; dispatch uses KKT sensitivities; and PySAM, FLORIS, PEM, and ProFAST use local finite
+differences. PySAM's supported input is DC capacity and FLORIS's is hub height; other wind and
+solar design inputs are not covered. The PEM directional finite difference and storage recurrence
+currently support forward mode only. These partials have only been implemented for the example's
+paths and modes, not every H2I component.
 
-| Horizon | Optimizer | LCOH (USD/kg) | Battery (MWh / MW) | Electrolyzer (MW) | Model evaluations | Gradient evaluations | Wall time |
-|---|---|---|---|---|---|---|---|
-| 28 days (script default) | SLSQP | 6.517 | 27.6 / 4.8 | 51.3 | 50 | 20 | about 35 s |
-| 28 days (script default) | COBYLA | 6.517 | 27.9 / 4.9 | 51.3 | 123 | 0 | about 95 s |
-| Full year (`SIZING_DAYS = 365`) | SLSQP | 8.425 | 57.1 / 9.4 | 39.3 | 12 | 9 | about 2.5 min |
-| Full year (`SIZING_DAYS = 365`) | COBYLA | 8.425 | 57.1 / 9.4 | 39.3 | 66 | 0 | about 13 min |
-
-Both optimizers reach the same design, with the capacity factor constraint active, but the
-gradient-based optimizer needs far fewer dispatch solves. Each gradient costs one reverse
-(adjoint) solve, regardless of the number of design variables.
+The PEM model rounds cluster capacity to whole megawatts and uses discrete operating decisions,
+so its cluster count and rating are held fixed in this optimization. Local finite differences
+can change substantially across PEM on/off thresholds or storage limits; agreement at one point
+does not imply a globally smooth model. For example, at 90 MW solar and 20 MWh battery energy,
+the component and independent finite-difference battery-power sensitivities disagreed at 2.0 MW
+but agreed at the chosen 2.1 MW starting point. Near the rounded sizing result, a 0.01 MW
+decrease in battery power changed LCOH by about 0.14 USD/kg and coincided with the PEM
+replacement schedule changing from every five years to every four years. The schedule's
+individual contribution to the jump has not been isolated. Check totals at multiple steps
+and designs, and compare against derivative-free solutions before relying on an optimization
+result.
 
 ## Developer notes
 

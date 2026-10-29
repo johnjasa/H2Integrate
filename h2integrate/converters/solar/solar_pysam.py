@@ -4,7 +4,7 @@ import numpy as np
 import PySAM.Pvwattsv8 as Pvwatts
 from attrs import field, define, validators
 
-from h2integrate.core.utilities import BaseConfig, merge_shared_inputs
+from h2integrate.core.utilities import BaseConfig, merge_shared_inputs, component_totals_enabled
 from h2integrate.converters.tools import check_pysam_input_params, check_pysam_lifetime_options
 from h2integrate.core.supported_models import register
 from h2integrate.converters.solar.solar_baseclass import SolarPerformanceBaseClass
@@ -250,6 +250,23 @@ class PYSAMSolarPlantPerformanceModel(SolarPerformanceBaseClass):
                 val=azimuth,
                 units="deg",
                 desc="Solar panel azimuth angle in degrees",
+            )
+
+        if component_totals_enabled(self.options):
+            self.declare_partials(
+                [
+                    "electricity_out",
+                    "rated_electricity_production",
+                    "system_capacity_AC",
+                    "total_electricity_produced",
+                    "annual_electricity_produced",
+                    "capacity_factor",
+                ],
+                "system_capacity_DC",
+                method="fd",
+                form="central",
+                step=1e-5,
+                step_calc="rel_avg",
             )
 
     def get_initial_angle_value(self, angle_name: str, system_model):

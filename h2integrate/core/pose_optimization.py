@@ -37,6 +37,7 @@ class PoseOptimization:
             "SNOPT",
             "CONMIN",
             "NSGA2",
+            "IPOPT",
         ]
 
     def _get_step_size(self):
@@ -133,27 +134,31 @@ class PoseOptimization:
 
         if self.config["driver"].get("optimization", {}).get("flag", False):
             opt_options = self.config["driver"]["optimization"]
-            step_size = self._get_step_size()
-
-            if "step_calc" in opt_options.keys():
-                if opt_options["step_calc"] == "None":
+            total_derivatives = opt_options.get("total_derivatives", "fd")
+            if total_derivatives == "fd":
+                step_size = self._get_step_size()
+                step_calc = opt_options.get("step_calc")
+                form = opt_options.get("form")
+                if step_calc == "None":
                     step_calc = None
-                else:
-                    step_calc = opt_options["step_calc"]
-            else:
-                step_calc = None
-
-            if "form" in opt_options.keys():
-                if opt_options["form"] == "None":
+                if form == "None":
                     form = None
-                else:
-                    form = opt_options["form"]
+                opt_prob.model.approx_totals(
+                    method="fd", step=step_size, form=form, step_calc=step_calc
+                )
+            elif total_derivatives == "components":
+                warnings.warn(
+                    "Component total derivatives require valid partial derivatives for every "
+                    "component on the objective and constraint paths. Undeclared partials are "
+                    "treated as zero. Check totals against finite differences before optimizing.",
+                    UserWarning,
+                    stacklevel=2,
+                )
             else:
-                form = None
-
-            opt_prob.model.approx_totals(
-                method="fd", step=step_size, form=form, step_calc=step_calc
-            )
+                raise ValueError(
+                    f"Unknown total_derivatives option {total_derivatives!r}; "
+                    "expected 'fd' or 'components'."
+                )
 
             # Set optimization solver and options. First, Scipy's SLSQP and COBYLA
             if opt_options["solver"] in self.scipy_methods:
@@ -177,7 +182,9 @@ class PoseOptimization:
                         but you have not installed pyOptSparse. \
                         Please do so and rerun."
                     ) from None
-                opt_prob.driver = pyOptSparseDriver(gradient_method=opt_options["gradient_method"])
+                opt_prob.driver = pyOptSparseDriver(
+                    gradient_method=opt_options.get("gradient_method", "openmdao")
+                )
 
                 try:
                     opt_prob.driver.options["optimizer"] = opt_options["solver"]
@@ -211,6 +218,11 @@ class PoseOptimization:
                     opt_prob = self._set_optimizer_properties(
                         opt_prob, opt_settings_keys=opt_settings_keys
                     )
+
+                elif opt_options["solver"] == "IPOPT":
+                    for key in ("tol", "max_iter"):
+                        if key in opt_options:
+                            opt_prob.driver.opt_settings[key] = opt_options[key]
 
                 elif opt_options["solver"] == "SNOPT":
                     opt_prob.driver.opt_settings["Major optimality tolerance"] = float(
@@ -265,6 +277,9 @@ class PoseOptimization:
 
             else:
                 raise ValueError(f"Optimizer {opt_options['solver']} is not yet supported.")
+
+            if opt_options.get("coloring", False):
+                opt_prob.driver.declare_coloring()
 
             if opt_options["debug_print"]:
                 opt_prob.driver.options["debug_print"] = [

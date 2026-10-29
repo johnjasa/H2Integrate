@@ -2,11 +2,42 @@ import numpy as np
 import pytest
 import openmdao.api as om
 from pytest import approx, fixture
+from openmdao.utils.assert_utils import assert_check_partials
 
 from h2integrate.transporters.generic_combiner import GenericCombinerPerformanceModel
 
 
 rng = np.random.default_rng(seed=0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("rated", [(2.0, 3.0), (0.0, 0.0)])
+def test_combiner_partials(rated):
+    plant_config = {"plant": {"plant_life": 3, "simulation": {"n_timesteps": 4, "dt": 3600}}}
+    tech_config = {
+        "model_inputs": {
+            "performance_parameters": {"commodity": "electricity", "commodity_rate_units": "kW"}
+        }
+    }
+    prob = om.Problem(reports=False)
+    prob.model.add_subsystem(
+        "combiner",
+        GenericCombinerPerformanceModel(
+            plant_config=plant_config, tech_config=tech_config, driver_config={}
+        ),
+    )
+    prob.setup()
+    for i, rating in enumerate(rated, start=1):
+        prob.set_val(f"combiner.electricity_in{i}", np.arange(4) + i, units="kW")
+        prob.set_val(f"combiner.rated_electricity_production{i}", rating, units="kW")
+        prob.set_val(f"combiner.electricity_capacity_factor{i}", np.array([0.3, 0.4, 0.5]))
+    prob.run_model()
+    if sum(rated) == 0:
+        # The zero-rated branch is constant; a positive perturbation crosses its kink.
+        data = prob.check_partials(out_stream=None, method="fd", form="backward")
+    else:
+        data = prob.check_partials(out_stream=None, method="fd", form="central", step=1e-5)
+    assert_check_partials(data, atol=1e-6, rtol=1e-6)
 
 
 @fixture

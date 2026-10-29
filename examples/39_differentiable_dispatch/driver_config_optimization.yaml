@@ -1,0 +1,45 @@
+name: driver_config
+description: Size the battery and solar plant with component-level derivatives
+general:
+  folder_output: outputs
+  create_om_reports: false
+driver:
+  optimization:
+    flag: true
+    solver: SLSQP
+    tol: 1.0e-5
+    max_iter: 100
+    debug_print: false
+    total_derivatives: components
+    derivative_mode: fwd
+design_variables:
+  battery:
+    storage_capacity:
+      flag: true
+      lower: 10.0
+      upper: 500.0
+      units: MW*h
+      ref: 100.0
+    max_charge_rate:
+      flag: true
+      lower: 1.0
+      upper: 100.0
+      units: MW
+      ref: 25.0
+  distributed_pv:
+    system_capacity_DC:
+      flag: true
+      lower: 10000.0
+      upper: 120000.0
+      units: kW
+      ref: 50000.0
+objective:
+  name: finance_subgroup_hydrogen.LCOH
+  ref: 10.0
+constraints:
+  electrolyzer:
+    capacity_factor:
+      flag: true
+      lower: 0.5
+      indices: [0]
+      units: unitless

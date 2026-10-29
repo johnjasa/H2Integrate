@@ -1,3 +1,4 @@
+import numpy as np
 import openmdao.api as om
 
 from h2integrate.core.supported_models import register
@@ -33,6 +34,13 @@ class CablePerformanceModel(om.ExplicitComponent):
             val=-1.0,
             shape=n_timesteps,
             units="kW",
+        )
+        self.declare_partials(
+            self.output_name,
+            self.input_name,
+            rows=np.arange(n_timesteps),
+            cols=np.arange(n_timesteps),
+            val=1.0,
         )
 
     def compute(self, inputs, outputs):

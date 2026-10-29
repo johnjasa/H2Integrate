@@ -5,28 +5,23 @@ battery dispatched by ``DifferentiableDispatchStorageController``, a drop-in rep
 open-loop demand controller. The controller solves a perfect-foresight dispatch optimization with
 Ipopt and provides exact derivatives through its optimality (KKT) conditions.
 
-Part 2 uses the plant's generation profile to size the battery and the electrolyzer for the
-lowest levelized cost of hydrogen, subject to a minimum electrolyzer capacity factor. Exact total
-derivatives flow through the dispatch optimization, so the script first checks them against
-finite differences and then compares gradient-based SLSQP with gradient-free COBYLA.
+Part 2 optimizes battery and solar sizing in the actual H2I plant, including the FLORIS, PySAM,
+PEM, and ProFAST models. The PEM cluster count and rating are fixed because the PEM model rounds
+cluster capacity to whole megawatts. Component-level derivatives combine analytic partials and
+the dispatch KKT sensitivity with local finite differences for black-box models.
+Pass ``--compare-cobyla`` to also run a derivative-free comparison.
 
 Requires the optional ``dol`` dependencies: ``pip install -e ".[dol]"`` then
 ``idaes get-extensions``.
 """
 
 import time
+import argparse
 from pathlib import Path
 
-from sizing_problem import build_sizing_problem
+from sizing_problem import set_fixed_demand, build_sizing_problem, set_initial_sizing_design
 
 from h2integrate import H2IntegrateModel, load_tech_yaml, load_plant_yaml, load_driver_yaml
-
-
-# Days of the generation profile used for the sizing study. A full year (365) gives the most
-# representative design and takes about 15 minutes for both optimizers; 28 days runs in about
-# two minutes.
-SIZING_DAYS = 28
-MIN_ELECTROLYZER_CAPACITY_FACTOR = 0.6
 
 
 def run_plant(this_dir):
@@ -57,54 +52,55 @@ def run_plant(this_dir):
     return h2i
 
 
-def run_sizing_study(generation_MW):
-    """Check total derivatives, then compare SLSQP and COBYLA on the sizing problem."""
-    prob = build_sizing_problem(generation_MW, min_capacity_factor=MIN_ELECTROLYZER_CAPACITY_FACTOR)
-    prob.run_model()
-    print("\nTotal derivative check (exact adjoint vs central finite differences):")
-    totals = prob.check_totals(out_stream=None, method="fd", step=1e-5, form="central")
-    for (of, wrt), data in totals.items():
-        exact = data.get("J_rev", data.get("J_fwd")).item()
-        fd = data["J_fd"].item()
-        print(f"  d({of})/d({wrt}): exact {exact: .6e}  fd {fd: .6e}")
-
+def run_sizing_study(this_dir, compare_cobyla=False):
+    """Optimize the complete H2I plant, optionally comparing COBYLA."""
     results = {}
-    for optimizer in ("SLSQP", "COBYLA"):
-        prob = build_sizing_problem(
-            generation_MW,
-            optimizer=optimizer,
-            min_capacity_factor=MIN_ELECTROLYZER_CAPACITY_FACTOR,
-        )
+    optimizers = ("SLSQP", "COBYLA") if compare_cobyla else ("SLSQP",)
+    for optimizer in optimizers:
+        h2i = build_sizing_problem(this_dir, optimizer=optimizer)
+        h2i.setup()
+        set_fixed_demand(h2i)
+        set_initial_sizing_design(h2i)
+        prob = h2i.prob
         start = time.time()
-        prob.run_driver()
-        lcoh = prob.model.lcoh
+        h2i.run()
+        if not prob.driver.result.success:
+            raise RuntimeError(f"{optimizer} did not converge: {prob.driver.result.exit_status}")
+        capacity_factor = prob.get_val("electrolyzer.capacity_factor")[0]
+        minimum = h2i.driver_config["constraints"]["electrolyzer"]["capacity_factor"]["lower"]
+        if capacity_factor < minimum - 1e-5:
+            raise RuntimeError(
+                f"{optimizer} returned an infeasible first-year capacity factor: "
+                f"{capacity_factor:.6f} < {minimum:.6f}"
+            )
         results[optimizer] = {
-            "LCOH": prob.get_val("LCOH", units="USD/kg").item(),
-            "battery_MWh": prob.get_val("storage_capacity", units="MW*h").item(),
-            "battery_MW": prob.get_val("max_charge_rate", units="MW").item(),
-            "electrolyzer_MW": prob.get_val("electrolyzer_rating", units="MW").item(),
-            "capacity_factor": prob.get_val("electrolyzer_capacity_factor").item(),
-            "model_evaluations": lcoh.n_compute,
-            "gradient_evaluations": lcoh.n_partials,
+            "LCOH": prob.get_val("finance_subgroup_hydrogen.LCOH", units="USD/kg").item(),
+            "battery_MWh": prob.get_val("battery.storage_capacity", units="MW*h").item(),
+            "battery_MW": prob.get_val("battery.max_charge_rate", units="MW").item(),
+            "solar_MW": prob.get_val("distributed_pv.system_capacity_DC", units="MW").item(),
+            "capacity_factor": capacity_factor,
+            "model_evaluations": prob.driver.result.model_evals,
+            "gradient_evaluations": prob.driver.result.deriv_evals,
             "seconds": time.time() - start,
         }
+        prob.cleanup()
 
-    print(f"\nSizing study over {generation_MW.size} hours:")
+    print("\nFull-year H2I sizing study (fixed electrolyzer design):")
     header = (
-        f"{'optimizer':>9} {'LCOH':>8} {'batt MWh':>9} {'batt MW':>8} {'elec MW':>8} "
+        f"{'optimizer':>9} {'LCOH':>8} {'batt MWh':>9} {'batt MW':>8} {'solar MW':>8} "
         f"{'CF':>6} {'evals':>6} {'grads':>6} {'time s':>7}"
     )
     print(header)
     for name, r in results.items():
         print(
             f"{name:>9} {r['LCOH']:8.4f} {r['battery_MWh']:9.2f} {r['battery_MW']:8.2f} "
-            f"{r['electrolyzer_MW']:8.2f} {r['capacity_factor']:6.3f} {r['model_evaluations']:6d} "
+            f"{r['solar_MW']:8.2f} {r['capacity_factor']:6.3f} {r['model_evaluations']:6d} "
             f"{r['gradient_evaluations']:6d} {r['seconds']:7.1f}"
         )
     return results
 
 
-def main():
+def main(compare_cobyla=False):
     this_dir = Path(__file__).parent
     h2i = run_plant(this_dir)
 
@@ -113,10 +109,15 @@ def main():
     print(f"Plant LCOH with differentiable battery dispatch: {lcoh:.3f} USD/kg")
     print(f"Battery set-point not met: {unmet:.1f} MWh over the year")
 
-    generation = h2i.prob.get_val("gen_combiner.electricity_out", units="MW")
-    run_sizing_study(generation[: 24 * SIZING_DAYS])
+    run_sizing_study(this_dir, compare_cobyla=compare_cobyla)
 
 
 # The guard is required on Windows: Pyomo's PyNumero loader starts a multiprocessing worker.
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--compare-cobyla",
+        action="store_true",
+        help="Also run the slower derivative-free optimizer.",
+    )
+    main(compare_cobyla=parser.parse_args().compare_cobyla)

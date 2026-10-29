@@ -49,8 +49,25 @@ properties:
             type: string
             description: >-
               Optimization solver to use. SLSQP, Nelder-Mead, and COBYLA use
-              the Scipy driver. SNOPT, CONMIN, and NSGA2 require pyOptSparse.
+              the Scipy driver. SNOPT, CONMIN, NSGA2, and IPOPT require pyOptSparse.
               GA uses the OpenMDAO SimpleGADriver.
+          total_derivatives:
+            type: string
+            enum: [fd, components]
+            default: fd
+            description: >-
+              Use whole-model finite differences (fd), or assemble totals from the
+              partial derivatives declared by individual components (components).
+              In components mode, undeclared component derivatives are treated as zero.
+          derivative_mode:
+            type: string
+            enum: [auto, fwd, rev]
+            default: auto
+            description: OpenMDAO linear derivative mode.
+          coloring:
+            type: boolean
+            default: false
+            description: Enable OpenMDAO total-derivative coloring.
           step_size:
             type: number
             description: Step size for the driver-level finite differencing

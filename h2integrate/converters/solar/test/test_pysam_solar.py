@@ -196,6 +196,55 @@ def basic_pysam_options():
 
 
 @pytest.mark.unit
+def test_pvwatts_component_derivative(basic_pysam_options, solar_resource_dict, plant_config):
+    tech_config = {
+        "model_inputs": {
+            "performance_parameters": {
+                "pv_capacity_kWdc": 250000.0,
+                "dc_ac_ratio": 1.23,
+                "create_model_from": "default",
+                "config_name": "PVWattsSingleOwner",
+                "tilt": 20.0,
+                "tilt_angle_setting": "input",
+                "pysam_options": basic_pysam_options,
+            }
+        }
+    }
+    component_driver_config = {
+        "driver": {"optimization": {"flag": True, "total_derivatives": "components"}}
+    }
+    prob = om.Problem(reports=False)
+    prob.model.add_subsystem(
+        "resource",
+        GOESAggregatedSolarAPI(
+            plant_config=plant_config, resource_config=solar_resource_dict, driver_config={}
+        ),
+        promotes=["*"],
+    )
+    prob.model.add_subsystem(
+        "solar",
+        PYSAMSolarPlantPerformanceModel(
+            plant_config=plant_config,
+            tech_config=tech_config,
+            driver_config=component_driver_config,
+        ),
+        promotes=["*"],
+    )
+    prob.setup()
+    prob.run_model()
+    derivative = prob.compute_totals(
+        of=["total_electricity_produced"], wrt=["system_capacity_DC"], return_format="array"
+    )[0, 0]
+    samples = []
+    for capacity in (250001.0, 249999.0):
+        prob.set_val("system_capacity_DC", capacity)
+        prob.run_model()
+        samples.append(prob.get_val("total_electricity_produced")[0])
+    assert derivative > 0
+    assert derivative == pytest.approx((samples[0] - samples[1]) / 2.0, rel=1e-4)
+
+
+@pytest.mark.unit
 def test_pvwatts_outputs(basic_pysam_options, solar_resource_dict, plant_config, subtests):
     basic_pysam_options["SystemDesign"].update({"tilt": 0.0})
     pv_design_dict = {

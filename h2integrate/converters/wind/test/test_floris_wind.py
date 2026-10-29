@@ -62,6 +62,48 @@ def plant_config_openmeteo():
 
 
 @pytest.mark.unit
+def test_floris_component_derivative(plant_config_openmeteo, floris_config):
+    floris_config["hub_height"] = 65.0
+    floris_config["resource_data_averaging_method"] = "weighted_average"
+    tech_config = {"model_inputs": {"performance_parameters": floris_config}}
+    resource_config = plant_config_openmeteo["site"]["resource"]["wind_resource"][
+        "resource_parameters"
+    ]
+    driver_config = {"driver": {"optimization": {"flag": True, "total_derivatives": "components"}}}
+    prob = om.Problem(reports=False)
+    prob.model.add_subsystem(
+        "wind_resource",
+        OpenMeteoHistoricalWindResource(
+            plant_config=plant_config_openmeteo,
+            resource_config=resource_config,
+            driver_config={},
+        ),
+        promotes=["*"],
+    )
+    prob.model.add_subsystem(
+        "wind",
+        FlorisWindPlantPerformanceModel(
+            plant_config=plant_config_openmeteo,
+            tech_config=tech_config,
+            driver_config=driver_config,
+        ),
+        promotes=["*"],
+    )
+    prob.setup()
+    prob.run_model()
+    derivative = prob.compute_totals(
+        of=["total_electricity_produced"], wrt=["hub_height"], return_format="array"
+    )[0, 0]
+    samples = []
+    for height in (65.013, 64.987):
+        prob.set_val("hub_height", height)
+        prob.run_model()
+        samples.append(prob.get_val("total_electricity_produced")[0])
+    assert derivative != pytest.approx(0.0, abs=1e-8)
+    assert derivative == pytest.approx((samples[0] - samples[1]) / 0.026, rel=5e-3)
+
+
+@pytest.mark.unit
 def test_floris_outputs(plant_config_openmeteo, floris_config, subtests):
     tech_config_dict = {
         "model_inputs": {

@@ -1,3 +1,4 @@
+import numpy as np
 import openmdao.api as om
 from attrs import field, define
 
@@ -100,6 +101,27 @@ class GenericCombinerPerformanceModel(om.ExplicitComponent):
             units=self.config.commodity_rate_units,
         )
 
+        for i in range(1, self.config.in_streams + 1):
+            self.declare_partials(
+                f"{self.config.commodity}_out",
+                f"{self.config.commodity}_in{i}",
+                rows=np.arange(n_timesteps),
+                cols=np.arange(n_timesteps),
+                val=1.0,
+            )
+            self.declare_partials(
+                f"rated_{self.config.commodity}_production",
+                f"rated_{self.config.commodity}_production{i}",
+                val=1.0,
+            )
+            self.declare_partials(
+                "capacity_factor",
+                f"{self.config.commodity}_capacity_factor{i}",
+                rows=np.arange(plant_life),
+                cols=np.arange(plant_life),
+            )
+            self.declare_partials("capacity_factor", f"rated_{self.config.commodity}_production{i}")
+
     def compute(self, inputs, outputs):
         total_out = 0.0
         combined_production = 0.0
@@ -128,3 +150,30 @@ class GenericCombinerPerformanceModel(om.ExplicitComponent):
             outputs["capacity_factor"] = weighted_cf
         else:
             outputs["capacity_factor"] = 0.0
+
+    def compute_partials(self, inputs, partials):
+        commodity = self.config.commodity
+        total_rated = sum(
+            inputs[f"rated_{commodity}_production{i}"][0]
+            for i in range(1, self.config.in_streams + 1)
+        )
+        if total_rated > 0:
+            weighted_cf = (
+                sum(
+                    inputs[f"{commodity}_capacity_factor{i}"]
+                    * inputs[f"rated_{commodity}_production{i}"][0]
+                    for i in range(1, self.config.in_streams + 1)
+                )
+                / total_rated
+            )
+        for i in range(1, self.config.in_streams + 1):
+            rated_name = f"rated_{commodity}_production{i}"
+            cf_name = f"{commodity}_capacity_factor{i}"
+            if total_rated > 0:
+                partials["capacity_factor", cf_name] = inputs[rated_name][0] / total_rated
+                partials["capacity_factor", rated_name] = (
+                    inputs[cf_name] - weighted_cf
+                ) / total_rated
+            else:
+                partials["capacity_factor", cf_name] = 0.0
+                partials["capacity_factor", rated_name] = 0.0

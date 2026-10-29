@@ -1,3 +1,4 @@
+import numpy as np
 from attrs import field, define, validators
 
 from h2integrate.core.utilities import merge_shared_inputs
@@ -65,6 +66,7 @@ class GenericConverterCostConfig(CostModelBaseConfig):
 
 @register
 class GenericConverterCostModel(CostModelBaseClass):
+    _cost_year_is_constant = True
     _time_step_bounds = (
         3600,
         3600,
@@ -144,6 +146,27 @@ class GenericConverterCostModel(CostModelBaseClass):
                 desc="Unit Fixed OpEx",
             )
 
+        rated = f"rated_{self.config.commodity}_production"
+        annual = f"annual_{self.config.commodity}_produced"
+        self.declare_partials("CapEx", [rated, "unit_capex"])
+        self.declare_partials("CapEx", "additional_constant_capex", val=1.0)
+        if self.config.opex_fraction is not None:
+            self.declare_partials("OpEx", [rated, "unit_capex", "fixed_opex_ratio"])
+        else:
+            self.declare_partials("OpEx", [rated, "unit_opex"])
+        self.declare_partials("OpEx", "additional_constant_opex", val=1.0)
+        self.declare_partials(
+            "VarOpEx", annual, rows=np.arange(self.plant_life), cols=np.arange(self.plant_life)
+        )
+        self.declare_partials("VarOpEx", "unit_varopex")
+        self.declare_partials(
+            "VarOpEx",
+            "additional_constant_varopex",
+            rows=np.arange(self.plant_life),
+            cols=np.arange(self.plant_life),
+            val=1.0,
+        )
+
     def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
         tot_capex = inputs[f"rated_{self.config.commodity}_production"] * inputs["unit_capex"]
         outputs["CapEx"] = tot_capex + inputs["additional_constant_capex"]
@@ -156,3 +179,18 @@ class GenericConverterCostModel(CostModelBaseClass):
         outputs["VarOpEx"] = (
             inputs[f"annual_{self.config.commodity}_produced"] * inputs["unit_varopex"]
         ) + inputs["additional_constant_varopex"]
+
+    def compute_partials(self, inputs, partials):
+        rated = f"rated_{self.config.commodity}_production"
+        annual = f"annual_{self.config.commodity}_produced"
+        partials["CapEx", rated] = inputs["unit_capex"]
+        partials["CapEx", "unit_capex"] = inputs[rated]
+        if self.config.opex_fraction is not None:
+            partials["OpEx", rated] = inputs["unit_capex"] * inputs["fixed_opex_ratio"]
+            partials["OpEx", "unit_capex"] = inputs[rated] * inputs["fixed_opex_ratio"]
+            partials["OpEx", "fixed_opex_ratio"] = inputs[rated] * inputs["unit_capex"]
+        else:
+            partials["OpEx", rated] = inputs["unit_opex"]
+            partials["OpEx", "unit_opex"] = inputs[rated]
+        partials["VarOpEx", annual] = inputs["unit_varopex"]
+        partials["VarOpEx", "unit_varopex"] = inputs[annual]

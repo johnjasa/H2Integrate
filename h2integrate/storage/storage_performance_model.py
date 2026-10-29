@@ -1,7 +1,8 @@
 import numpy as np
+import openmdao.api as om
 from attrs import field, define, validators
 
-from h2integrate.core.utilities import merge_shared_inputs
+from h2integrate.core.utilities import merge_shared_inputs, component_totals_enabled
 from h2integrate.core.supported_models import register
 from h2integrate.storage.storage_baseclass import (
     StoragePerformanceBase,
@@ -160,6 +161,8 @@ class StoragePerformanceModel(StoragePerformanceBase):
             units=self.commodity_rate_units,
         )  # this represents the excess capacity that could have been dumped
 
+        self.matrix_free = component_totals_enabled(self.options)
+
     def compute(self, inputs, outputs, discrete_inputs=[], discrete_outputs=[]):
         """Run the storage performance model."""
 
@@ -209,3 +212,150 @@ class StoragePerformanceModel(StoragePerformanceBase):
             available_discharge
             * self.config.discharge_efficiency  # i could dump this much power out total
         )
+
+    def compute_jacvec_product(self, inputs, d_inputs, d_outputs, mode, discrete_inputs=None):
+        """Propagate piecewise storage derivatives forward over a full simulation horizon."""
+        if mode != "fwd":
+            raise om.AnalysisError(
+                "StoragePerformanceModel component derivatives currently require "
+                "derivative_mode: fwd."
+            )
+        if self.using_feedback_control or self.n_timesteps_window != self.n_timesteps:
+            raise om.AnalysisError(
+                "StoragePerformanceModel component derivatives require open-loop control "
+                "and a full-horizon simulation."
+            )
+        if "timestep_index" in d_inputs and np.any(d_inputs["timestep_index"]):
+            raise om.AnalysisError(
+                "Storage timestep_index is discrete and cannot be differentiated."
+            )
+
+        commodity = self.commodity
+
+        def scalar_seed(name):
+            return float(d_inputs[name][0]) if name in d_inputs else 0.0
+
+        def vector_seed(name):
+            return np.asarray(d_inputs[name]) if name in d_inputs else np.zeros(self.n_timesteps)
+
+        capacity = inputs["storage_capacity"][0]
+        charge_rate = inputs["max_charge_rate"][0]
+        discharge_rate = (
+            inputs["max_discharge_rate"][0] if "max_discharge_rate" in inputs else charge_rate
+        )
+        if capacity <= 0 or charge_rate <= 0 or discharge_rate <= 0:
+            raise om.AnalysisError(
+                "StoragePerformanceModel derivatives require positive capacity and rate limits."
+            )
+        d_capacity = scalar_seed("storage_capacity")
+        d_charge_rate = scalar_seed("max_charge_rate")
+        d_discharge_rate = (
+            scalar_seed("max_discharge_rate") if "max_discharge_rate" in inputs else d_charge_rate
+        )
+        available = inputs[f"{commodity}_in"]
+        command = inputs[f"{commodity}_command_value"]
+        d_available = vector_seed(f"{commodity}_in")
+        d_command = vector_seed(f"{commodity}_command_value")
+        charge_eff = self.config.charge_efficiency
+        discharge_eff = self.config.discharge_efficiency
+        soc = self.soc_init
+        d_soc = 0.0
+        flow = np.zeros(self.n_timesteps)
+        d_flow = np.zeros(self.n_timesteps)
+        soc_values = np.zeros(self.n_timesteps)
+        d_soc_values = np.zeros(self.n_timesteps)
+
+        for t in range(self.n_timesteps):
+            if command[t] < 0:
+                headroom = (self.config.max_soc_fraction - soc) * capacity / self.dt_amount
+                d_headroom = (
+                    (self.config.max_soc_fraction - soc) * d_capacity - capacity * d_soc
+                ) / self.dt_amount
+                values = (headroom / charge_eff, charge_rate, -command[t], available[t])
+                tangents = (d_headroom / charge_eff, d_charge_rate, -d_command[t], d_available[t])
+                selected = int(np.argmin(values))
+                charge = max(0.0, values[selected])
+                d_charge = tangents[selected] if values[selected] > 0 else 0.0
+                delta = charge * charge_eff * self.dt_amount / capacity
+                d_delta = (
+                    charge_eff
+                    * self.dt_amount
+                    * (d_charge / capacity - charge * d_capacity / capacity**2)
+                )
+                soc += delta
+                d_soc += d_delta
+                flow[t] = -charge
+                d_flow[t] = -d_charge
+            else:
+                headroom = (soc - self.config.min_soc_fraction) * capacity / self.dt_amount
+                d_headroom = (
+                    (soc - self.config.min_soc_fraction) * d_capacity + capacity * d_soc
+                ) / self.dt_amount
+                values = (headroom, discharge_rate / discharge_eff, command[t] / discharge_eff)
+                tangents = (
+                    d_headroom,
+                    d_discharge_rate / discharge_eff,
+                    d_command[t] / discharge_eff,
+                )
+                selected = int(np.argmin(values))
+                discharge = max(0.0, values[selected])
+                d_discharge = tangents[selected] if values[selected] > 0 else 0.0
+                delta = discharge * self.dt_amount / capacity
+                d_delta = self.dt_amount * (
+                    d_discharge / capacity - discharge * d_capacity / capacity**2
+                )
+                soc -= delta
+                d_soc -= d_delta
+                flow[t] = discharge * discharge_eff
+                d_flow[t] = d_discharge * discharge_eff
+            soc_values[t] = soc
+            d_soc_values[t] = d_soc
+
+        d_charge = np.where(flow < 0, d_flow, 0.0)
+        d_discharge = np.where(flow > 0, d_flow, 0.0)
+        amount = np.sum(flow) * self.dt_amount
+        d_amount = np.sum(d_flow) * self.dt_amount
+        discharged = np.maximum(flow, 0.0).sum() * self.dt_amount
+        d_discharged = d_discharge.sum() * self.dt_amount
+        denominator = discharge_rate * self.n_timesteps * self.dt_amount
+        d_denominator = d_discharge_rate * self.n_timesteps * self.dt_amount
+
+        charge_headroom = (self.config.max_soc_fraction - soc_values) * capacity / self.dt_hr
+        d_charge_headroom = (
+            (self.config.max_soc_fraction - soc_values) * d_capacity - capacity * d_soc_values
+        ) / self.dt_hr
+        discharge_headroom = (soc_values - self.config.min_soc_fraction) * capacity / self.dt_hr
+        d_discharge_headroom = (
+            (soc_values - self.config.min_soc_fraction) * d_capacity + capacity * d_soc_values
+        ) / self.dt_hr
+        d_charge_available = np.where(
+            charge_headroom < charge_rate, d_charge_headroom, d_charge_rate
+        )
+        d_charge_available = np.where(
+            np.minimum(charge_headroom, charge_rate) > 0, d_charge_available, 0.0
+        )
+        d_discharge_available = np.where(
+            discharge_headroom < discharge_rate, d_discharge_headroom, d_discharge_rate
+        )
+        d_discharge_available = np.where(
+            np.minimum(discharge_headroom, discharge_rate) > 0, d_discharge_available, 0.0
+        )
+        derivatives = {
+            f"{commodity}_out": d_flow,
+            f"storage_{commodity}_charge": d_charge,
+            f"storage_{commodity}_discharge": d_discharge,
+            "SOC": 100.0 * d_soc_values,
+            "storage_duration": d_capacity / discharge_rate
+            - capacity * d_discharge_rate / discharge_rate**2,
+            f"rated_{commodity}_production": d_discharge_rate,
+            f"total_{commodity}_produced": d_amount,
+            f"annual_{commodity}_produced": d_amount / self.fraction_of_year_simulated,
+            "capacity_factor": d_amount / denominator - amount * d_denominator / denominator**2,
+            "standard_capacity_factor": d_discharged / denominator
+            - discharged * d_denominator / denominator**2,
+            f"{commodity}_charge_demand": d_charge_available / charge_eff,
+            f"{commodity}_headroom": d_discharge_available * discharge_eff,
+        }
+        for name, value in derivatives.items():
+            if name in d_outputs:
+                d_outputs[name] += value

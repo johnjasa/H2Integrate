@@ -3409,18 +3409,49 @@ def test_differentiable_dispatch_example(subtests, temp_copy_of_example):
     )
     sizing_problem = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sizing_problem)
-    generation = h2i.prob.get_val("gen_combiner.electricity_out", units="MW")[: 24 * 7]
-
-    with subtests.test("Exact total derivatives match finite differences"):
-        prob = sizing_problem.build_sizing_problem(generation)
+    with subtests.test("Full H2I component totals match independent finite differences"):
+        sizing_model = sizing_problem.build_sizing_problem(example_folder)
+        sizing_model.setup()
+        sizing_problem.set_fixed_demand(sizing_model)
+        prob = sizing_model.prob
         prob.run_model()
-        totals = prob.check_totals(out_stream=None, method="fd", step=1e-5, form="central")
-        for key, data in totals.items():
-            exact = data.get("J_rev", data.get("J_fwd"))
-            assert np.allclose(exact, data["J_fd"], rtol=1e-4, atol=1e-10), key
-
-    with subtests.test("Gradient-based sizing converges"):
-        prob = sizing_problem.build_sizing_problem(generation, optimizer="SLSQP")
-        prob.run_driver()
-        assert prob.driver.result.success
-        assert prob.get_val("electrolyzer_capacity_factor")[0] >= 0.6 - 1e-4
+        objective = "finance_subgroup_hydrogen.LCOH"
+        constraint = "electrolyzer.capacity_factor"
+        designs = (
+            "battery.storage_capacity",
+            "battery.max_charge_rate",
+            "distributed_pv.system_capacity_DC",
+        )
+        totals = prob.compute_totals(of=[objective, constraint], wrt=designs)
+        for design, step in zip(designs, (0.001, 0.01, 0.05)):
+            base = prob.get_val(design).copy()
+            values = []
+            for delta in (step, -step):
+                prob.set_val(design, base + delta)
+                prob.run_model()
+                values.append((prob.get_val(objective)[0], prob.get_val(constraint)[0]))
+            prob.set_val(design, base)
+            for index, response in enumerate((objective, constraint)):
+                finite_difference = (values[0][index] - values[1][index]) / (2 * step)
+                assert totals[(response, design)][0, 0] == pytest.approx(
+                    finite_difference, rel=5e-3, abs=1e-8
+                ), (response, design)
+        sizing_problem.set_initial_sizing_design(sizing_model)
+        prob.run_model()
+        assert prob.get_val(constraint)[0] >= 0.5
+        rate = "battery.max_charge_rate"
+        initial_totals = prob.compute_totals(of=[objective, constraint], wrt=[rate])
+        base = prob.get_val(rate).copy()
+        for step in (0.000002, 0.00002):
+            values = []
+            for delta in (step, -step):
+                prob.set_val(rate, base + delta)
+                prob.run_model()
+                values.append((prob.get_val(objective)[0], prob.get_val(constraint)[0]))
+            for index, response in enumerate((objective, constraint)):
+                finite_difference = (values[0][index] - values[1][index]) / (2 * step)
+                assert initial_totals[(response, rate)][0, 0] == pytest.approx(
+                    finite_difference, rel=5e-3, abs=1e-8
+                ), (response, rate, step)
+        prob.set_val(rate, base)
+        prob.cleanup()

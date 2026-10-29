@@ -61,6 +61,44 @@ def fake_cost_dict():
 
 
 @pytest.mark.unit
+def test_profast_component_derivatives(profast_inputs_no1):
+    plant_config = {
+        "plant": {"plant_life": 3},
+        "finance_parameters": {"model_inputs": profast_inputs_no1},
+    }
+    driver = {"driver": {"optimization": {"flag": True, "total_derivatives": "components"}}}
+    prob = om.Problem(reports=False)
+    ivc = om.IndepVarComp()
+    ivc.add_output("rated_electricity_production", 500000.0, units="kW")
+    ivc.add_output("capacity_factor", [0.8, 0.8, 0.8], units="unitless")
+    prob.model.add_subsystem("ivc", ivc, promotes=["*"])
+    prob.model.add_subsystem(
+        "pf",
+        ProFastLCO(
+            driver_config=driver,
+            plant_config=plant_config,
+            tech_config={"wind": {"model_inputs": {}}},
+            commodity_type="electricity",
+        ),
+        promotes=["rated_electricity_production", "capacity_factor"],
+    )
+    prob.setup()
+    prob.set_val("pf.capex_adjusted_wind", 950054634.1, units="USD")
+    prob.set_val("pf.opex_adjusted_wind", 21093892.68, units="USD/year")
+    prob.run_model()
+    derivative = prob.compute_totals(
+        of=["pf.LCOE"], wrt=["pf.capex_adjusted_wind"], return_format="array"
+    )[0, 0]
+    samples = []
+    for capex in (950154634.1, 949954634.1):
+        prob.set_val("pf.capex_adjusted_wind", capex, units="USD")
+        prob.run_model()
+        samples.append(prob.get_val("pf.LCOE")[0])
+    assert derivative > 0
+    assert derivative == pytest.approx((samples[0] - samples[1]) / 200000.0, rel=1e-4)
+
+
+@pytest.mark.unit
 def test_profast_params_config(profast_inputs_no1, subtests):
     profast_params = profast_inputs_no1["params"]
     profast_params["plant_life"] = 30

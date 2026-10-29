@@ -4,9 +4,25 @@ import attrs
 import numpy as np
 import pandas as pd
 from attrs import Attribute, define
+from openmdao.utils.general_utils import is_undefined
+from openmdao.utils.options_dictionary import OptionsDictionary
 
 
 BaseConfigType = TypeVar("BaseConfigType", bound="BaseConfig")
+
+
+def component_totals_enabled(options: OptionsDictionary) -> bool:
+    """Return whether an H2I component is configured to provide component-based totals.
+
+    Standalone components may omit the otherwise declared ``driver_config`` option.
+    """
+    driver = dict(options.items()).get("driver_config")
+    if driver is None or is_undefined(driver):
+        return False
+    optimization = driver.get("driver", {}).get("optimization", {})
+    return bool(
+        optimization.get("flag") and optimization.get("total_derivatives", "fd") == "components"
+    )
 
 
 def merge_shared_inputs(config, input_type):

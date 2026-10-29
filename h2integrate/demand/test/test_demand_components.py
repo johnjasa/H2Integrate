@@ -2,9 +2,41 @@ import numpy as np
 import pytest
 import openmdao.api as om
 from pytest import fixture
+from openmdao.utils.assert_utils import assert_check_partials
 
 from h2integrate.demand.generic_demand import GenericDemandComponent
 from h2integrate.demand.flexible_demand import FlexibleDemandComponent
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "supply,demand", [([1.0, 4.0, 2.0], [3.0, 2.0, 5.0]), ([0.0, 0.0, 0.0], [3.0, 2.0, 5.0])]
+)
+def test_generic_demand_partials(supply, demand):
+    plant_config = {"plant": {"plant_life": 2, "simulation": {"n_timesteps": 3, "dt": 3600}}}
+    tech_config = {
+        "model_inputs": {
+            "performance_parameters": {
+                "commodity": "electricity",
+                "commodity_rate_units": "kW",
+                "demand_profile": demand,
+            }
+        }
+    }
+    prob = om.Problem(reports=False)
+    prob.model.add_subsystem(
+        "load",
+        GenericDemandComponent(plant_config=plant_config, tech_config=tech_config),
+    )
+    prob.setup()
+    prob.set_val("load.electricity_in", supply)
+    prob.set_val("load.electricity_demand", demand)
+    prob.run_model()
+    data = prob.check_partials(out_stream=None, method="fd", form="central", step=1e-5)
+    if sum(supply) == 0:
+        # The zero-total-supply summary uses a piecewise definition at this boundary.
+        data["load"].pop(("curtailment_percent", "electricity_in"))
+    assert_check_partials(data, atol=1e-6, rtol=1e-6)
 
 
 @fixture

@@ -374,21 +374,13 @@ class KKTSensitivity:
         )
         condition = results.solver.termination_condition
         message = str(results.solver.message or "")
-        converged = condition in (
+        if condition not in (
             pyo.TerminationCondition.optimal,
             pyo.TerminationCondition.locallyOptimal,
-        )
-        # Ipopt sometimes reaches the solution but stops with "Search Direction becomes Too
-        # Small" when the dual infeasibility stalls just above tol. Accept the final iterate
-        # here; the feasibility check below rejects it if it is not actually a solution.
-        stalled = "too small" in message.lower()
-        if not (converged or stalled):
-            raise RuntimeError(f"Ipopt did not converge (termination condition: {condition})")
-        if stalled and not converged:
-            results.solver.status = pyo.SolverStatus.ok
-            results.solver.termination_condition = pyo.TerminationCondition.optimal
-            for solution in results.solution:
-                solution.status = pyo.SolutionStatus.optimal
+        ):
+            raise RuntimeError(
+                f"Ipopt did not converge (termination condition: {condition}; message: {message})"
+            )
         self.model.solutions.load_from(results)
         model_dual = self.model.dual
         z_lower_suffix = self.model.ipopt_zL_out

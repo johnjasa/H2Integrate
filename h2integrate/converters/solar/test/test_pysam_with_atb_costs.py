@@ -1,11 +1,38 @@
 import pytest
 import openmdao.api as om
 from pytest import fixture
+from openmdao.utils.assert_utils import assert_check_partials
 
 from h2integrate.converters.solar.solar_pysam import PYSAMSolarPlantPerformanceModel
 from h2integrate.converters.solar.atb_res_com_pv_cost import ATBResComPVCostModel
 from h2integrate.converters.solar.atb_utility_pv_cost import ATBUtilityPVCostModel
 from h2integrate.resource.solar.nlr_developer_goes_api_models import GOESAggregatedSolarAPI
+
+
+@pytest.mark.unit
+def test_res_com_pv_cost_partials():
+    plant_config = {"plant": {"plant_life": 2, "simulation": {"n_timesteps": 3, "dt": 3600}}}
+    tech_config = {
+        "model_inputs": {
+            "cost_parameters": {
+                "pv_capacity_kWdc": 50000.0,
+                "capex_per_kWdc": 1492.0,
+                "opex_per_kWdc_per_year": 16.0,
+                "cost_year": 2022,
+            }
+        }
+    }
+    prob = om.Problem(reports=False)
+    prob.model.add_subsystem(
+        "cost", ATBResComPVCostModel(plant_config=plant_config, tech_config=tech_config)
+    )
+    prob.setup()
+    prob.run_model()
+    assert_check_partials(
+        prob.check_partials(out_stream=None, method="fd", form="central", step=1e-2),
+        atol=1e-5,
+        rtol=1e-7,
+    )
 
 
 @fixture

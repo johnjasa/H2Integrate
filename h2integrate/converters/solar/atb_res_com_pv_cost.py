@@ -31,6 +31,7 @@ class ATBResComPVCostModelConfig(CostModelBaseConfig):
 
 @register
 class ATBResComPVCostModel(CostModelBaseClass):
+    _cost_year_is_constant = True
     _time_step_bounds = (
         3600,
         3600,
@@ -49,6 +50,8 @@ class ATBResComPVCostModel(CostModelBaseClass):
             units="kW",
             desc="PV rated capacity in DC",
         )
+        self.declare_partials("CapEx", "system_capacity_DC", val=self.config.capex_per_kWdc)
+        self.declare_partials("OpEx", "system_capacity_DC", val=self.config.opex_per_kWdc_per_year)
 
     def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
         capacity = inputs["system_capacity_DC"][0]

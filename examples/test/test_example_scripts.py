@@ -57,6 +57,14 @@ def _script_param(script):
                 importlib.util.find_spec(module) is None, reason=f"{module} is not installed"
             )
         )
+    if script == "39_differentiable_dispatch/run_differentiable_dispatch.py":
+        from h2integrate.control.differentiable import kkt_tools_available
+
+        marks.append(
+            pytest.mark.skipif(
+                not kkt_tools_available(), reason="Ipopt and PyNumero ASL are not available"
+            )
+        )
     return pytest.param(script, marks=marks, id=script)
 
 

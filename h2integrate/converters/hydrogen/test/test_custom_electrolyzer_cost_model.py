@@ -1,5 +1,6 @@
 import pytest
 import openmdao.api as om
+from openmdao.utils.assert_utils import assert_check_partials
 
 from h2integrate.converters.hydrogen.custom_electrolyzer_cost_model import (
     CustomElectrolyzerCostModel,
@@ -54,3 +55,10 @@ def test_custom_electrolyzer_cost_model(subtests):
             units = "USD" if out == "CapEx" else "USD/year"
             val = prob.get_val(f"custom_elec_cost.{out}", units=units)
             assert pytest.approx(val, rel=1e-6) == expected[0]
+
+    with subtests.test("analytic partials"):
+        assert_check_partials(
+            prob.check_partials(out_stream=None, method="fd", form="central", step=1e-4),
+            atol=1e-6,
+            rtol=1e-6,
+        )

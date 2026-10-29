@@ -4,7 +4,7 @@ import numpy as np
 from attrs import field, define, validators
 from floris import TimeSeries, FlorisModel
 
-from h2integrate.core.utilities import merge_shared_inputs
+from h2integrate.core.utilities import merge_shared_inputs, component_totals_enabled
 from h2integrate.core.model_baseclass import CacheBaseClass, CacheBaseConfig
 from h2integrate.core.supported_models import register
 from h2integrate.converters.wind.tools.resource_tools import (
@@ -156,6 +156,22 @@ class FlorisWindPlantPerformanceModel(WindPerformanceBaseClass, CacheBaseClass):
 
         power_curve = self.config.floris_turbine_config.get("power_thrust_table").get("power")
         self.wind_turbine_rating_kW = np.max(power_curve)
+
+        if component_totals_enabled(self.options):
+            self.declare_partials(
+                [
+                    "electricity_out",
+                    "rated_electricity_production",
+                    "total_electricity_produced",
+                    "annual_electricity_produced",
+                    "capacity_factor",
+                ],
+                "hub_height",
+                method="fd",
+                form="central",
+                step=1e-4,
+                step_calc="rel_avg",
+            )
 
     def format_resource_data(self, hub_height, wind_resource_data):
         # NOTE: could weight resource data of bounding heights like

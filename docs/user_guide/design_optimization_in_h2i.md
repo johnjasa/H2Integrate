@@ -76,6 +76,43 @@ This is not an exhaustive list of the driver specifications, but it covers the m
 Different drivers may have different options available, so be sure to check the documentation for the specific driver you are using.
 Both the [OpenMDAO docs on drivers](https://openmdao.org/newdocs/versions/latest/features/building_blocks/drivers/index.html) as well as the internal source code in H2I for the optimization driver can be helpful in understanding the options available to you.
 
+### Total derivatives
+
+By default H2I approximates the total derivatives of the whole model using finite differences.
+This preserves existing optimization behavior. To assemble totals from individual components
+instead, opt in in the optimization section:
+
+```yaml
+driver:
+  optimization:
+    flag: true
+    solver: SLSQP
+    total_derivatives: components
+    derivative_mode: fwd
+    coloring: false
+```
+
+`total_derivatives` is `fd` by default; `components` combines each component's declared
+partials, which may themselves be analytic or approximated. `derivative_mode` selects
+OpenMDAO's `auto`, `fwd`, or `rev` mode. `coloring: true` enables total-derivative coloring.
+IPOPT, SNOPT, CONMIN, and NSGA2 require a separately installed pyOptSparse with the requested
+optimizer available. COBYLA does not use gradients.
+
+```{warning}
+Component totals are only valid when **every** component on the design-to-objective and
+design-to-constraint paths supplies the required derivatives. OpenMDAO treats undeclared
+partials as zero, not as finite differences. Support is currently limited to specific models
+and operating modes; always check totals against independent finite differences at several
+representative points and step sizes. Discrete and nonsmooth decisions require special care.
+```
+
+The differentiable dispatch example demonstrates a mixed analytic and local finite-difference
+chain through its actual H2I models; see {ref}`differentiable-dispatch-control`. Its storage
+and PEM component derivatives currently require full-horizon simulation and
+`derivative_mode: fwd`. For cost models explicitly marked as having a constant cost year, component mode uses
+the configured year as an independent constant in the finance chain. Change the configured
+year before building the model rather than changing the cost model's discrete output afterward.
+
 ## Design variables
 
 The `design_variables` section of the driver config file defines the design variables for the optimization problem.

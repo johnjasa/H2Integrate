@@ -28,6 +28,7 @@ class CustomElectrolyzerCostModel(ElectrolyzerCostBaseClass):
     An OpenMDAO component that computes the cost of a PEM electrolyzer.
     """
 
+    _cost_year_is_constant = True
     _time_step_bounds = (
         3600,
         3600,
@@ -61,8 +62,16 @@ class CustomElectrolyzerCostModel(ElectrolyzerCostBaseClass):
             units="USD/kW/yr",
             desc="Fixed OpEx of electrolyzer in USD/kW/year",
         )
+        self.declare_partials("CapEx", ["electrolyzer_size_mw", "unit_capex"])
+        self.declare_partials("OpEx", ["electrolyzer_size_mw", "fixed_opex"])
 
     def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
         electrolyzer_size_kW = inputs["electrolyzer_size_mw"]
         outputs["CapEx"] = inputs["unit_capex"] * electrolyzer_size_kW
         outputs["OpEx"] = inputs["fixed_opex"] * electrolyzer_size_kW
+
+    def compute_partials(self, inputs, partials):
+        partials["CapEx", "electrolyzer_size_mw"] = inputs["unit_capex"]
+        partials["CapEx", "unit_capex"] = inputs["electrolyzer_size_mw"]
+        partials["OpEx", "electrolyzer_size_mw"] = inputs["fixed_opex"]
+        partials["OpEx", "fixed_opex"] = inputs["electrolyzer_size_mw"]

@@ -2,8 +2,70 @@ import numpy as np
 import pytest
 import openmdao.api as om
 from pytest import fixture
+from openmdao.utils.assert_utils import assert_check_totals
 
 from h2integrate.converters.hydrogen.pem_electrolyzer import ECOElectrolyzerPerformanceModel
+
+
+@pytest.mark.unit
+def test_pem_directional_derivatives(tech_config):
+    n = 24
+    plant_config = {"plant": {"plant_life": 3, "simulation": {"n_timesteps": n, "dt": 3600}}}
+    driver = {"driver": {"optimization": {"flag": True, "total_derivatives": "components"}}}
+    prob = om.Problem(reports=False)
+    prob.model.add_subsystem(
+        "power",
+        om.ExecComp(
+            "electricity = scale * profile",
+            electricity={"val": np.zeros(n), "units": "kW"},
+            profile={"val": np.linspace(18000.0, 30000.0, n), "units": "kW"},
+            scale=1.0,
+        ),
+    )
+    prob.model.add_subsystem(
+        "pem",
+        ECOElectrolyzerPerformanceModel(
+            plant_config=plant_config, tech_config=tech_config, driver_config=driver
+        ),
+    )
+    prob.model.connect("power.electricity", "pem.electricity_in")
+    prob.setup(mode="fwd")
+    prob.run_model()
+    totals = prob.check_totals(
+        of=["pem.total_hydrogen_produced", "pem.capacity_factor", "pem.annual_hydrogen_produced"],
+        wrt=["power.scale"],
+        out_stream=None,
+        method="fd",
+        form="central",
+        step=1e-4,
+    )
+    assert_check_totals(totals, atol=1e-4, rtol=2e-4)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "mode,wrt,match",
+    [
+        ("fwd", "pem.n_clusters", "cluster sizing"),
+        ("rev", "pem.electricity_in", "derivative_mode: fwd"),
+    ],
+)
+def test_pem_unsupported_derivatives_raise(tech_config, mode, wrt, match):
+    n = 24
+    plant_config = {"plant": {"plant_life": 3, "simulation": {"n_timesteps": n, "dt": 3600}}}
+    driver = {"driver": {"optimization": {"flag": True, "total_derivatives": "components"}}}
+    prob = om.Problem(reports=False)
+    prob.model.add_subsystem(
+        "pem",
+        ECOElectrolyzerPerformanceModel(
+            plant_config=plant_config, tech_config=tech_config, driver_config=driver
+        ),
+    )
+    prob.setup(mode=mode)
+    prob.set_val("pem.electricity_in", np.full(n, 20000.0))
+    prob.run_model()
+    with pytest.raises(om.AnalysisError, match=match):
+        prob.compute_totals(of=["pem.total_hydrogen_produced"], wrt=[wrt])
 
 
 @fixture

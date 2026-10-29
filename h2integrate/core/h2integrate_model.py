@@ -1815,6 +1815,12 @@ class H2IntegrateModel:
         if "finance_parameters" not in self.plant_config:
             return
 
+        optimization = self.driver_config.get("driver", {}).get("optimization", {})
+        component_totals = (
+            optimization.get("flag") and optimization.get("total_derivatives", "fd") == "components"
+        )
+        constant_cost_year_sources = {}
+
         # Connect the outputs of the technology models to the appropriate finance groups
         for group_id, group_configs in self.finance_subgroups.items():
             tech_configs = group_configs.get("tech_configs")
@@ -1860,9 +1866,29 @@ class H2IntegrateModel:
                 self.plant.connect(
                     f"{tech_name}.VarOpEx", f"finance_subgroup_{group_id}.varopex_{tech_name}"
                 )
+                cost_year_source = f"{tech_name}.cost_year"
+                cost_model_cls = self.supported_models.get(cost_model)
+                if (
+                    component_totals
+                    and cost_model_cls is not None
+                    and vars(cost_model_cls).get("_cost_year_is_constant", False)
+                ):
+                    # A configured constant cost year must not appear dependent on the cost
+                    # component's continuous inputs in OpenMDAO's discrete-dependency graph.
+                    if tech_name not in constant_cost_year_sources:
+                        from h2integrate.core.utilities import merge_shared_inputs
+
+                        cost_inputs = merge_shared_inputs(
+                            tech_configs[tech_name]["model_inputs"], "cost"
+                        )
+                        source_name = f"constant_cost_year_{tech_name}"
+                        source = om.IndepVarComp()
+                        source.add_discrete_output("cost_year", val=int(cost_inputs["cost_year"]))
+                        self.plant.add_subsystem(source_name, source)
+                        constant_cost_year_sources[tech_name] = f"{source_name}.cost_year"
+                    cost_year_source = constant_cost_year_sources[tech_name]
                 self.plant.connect(
-                    f"{tech_name}.cost_year",
-                    f"finance_subgroup_{group_id}.cost_year_{tech_name}",
+                    cost_year_source, f"finance_subgroup_{group_id}.cost_year_{tech_name}"
                 )
 
                 if is_system_finance_model and perf_model not in no_replacement_schedule_models:
@@ -1988,7 +2014,11 @@ class H2IntegrateModel:
         """
         Extremely light wrapper to setup the OpenMDAO problem and track setup status.
         """
-        self.prob.setup()
+        optimization = self.driver_config.get("driver", {}).get("optimization", {})
+        mode = optimization.get("derivative_mode", "auto") if optimization.get("flag") else "auto"
+        if mode not in ("auto", "fwd", "rev"):
+            raise ValueError(f"Unknown derivative_mode {mode!r}; expected 'auto', 'fwd', or 'rev'.")
+        self.prob.setup(mode=mode)
         self.state = State.SETUP
 
         for tech, tech_info in self.technology_config["technologies"].items():

@@ -51,6 +51,7 @@ class GenericStorageCostModel(CostModelBaseClass):
 
     """
 
+    _cost_year_is_constant = True
     _time_step_bounds = (
         3600,
         3600,
@@ -99,6 +100,16 @@ class GenericStorageCostModel(CostModelBaseClass):
             units="unitless",
             desc="Annual operating cost as a fraction of total system cost",
         )
+        for output in ("CapEx", "OpEx"):
+            for input_name in (
+                "max_charge_rate",
+                "storage_capacity",
+                "capacity_capex",
+                "charge_capex",
+                "opex_fraction",
+            ):
+                if output != "CapEx" or input_name != "opex_fraction":
+                    self.declare_partials(output, input_name)
 
     def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
         storage_duration_hrs = 0.0
@@ -124,3 +135,31 @@ class GenericStorageCostModel(CostModelBaseClass):
         opex = inputs["opex_fraction"] * capex
         outputs["CapEx"] = capex
         outputs["OpEx"] = opex
+
+    def compute_partials(self, inputs, partials):
+        charge_rate = inputs["max_charge_rate"][0]
+        capacity = inputs["storage_capacity"][0]
+        capacity_capex = inputs["capacity_capex"][0]
+        charge_capex = inputs["charge_capex"][0]
+        fraction = inputs["opex_fraction"][0]
+        conversion = units.convert_units(
+            1.0,
+            f"({self.config.commodity_amount_units})/({self.config.commodity_rate_units})",
+            "h",
+        )
+        if charge_rate <= 0:
+            raise ValueError(
+                "GenericStorageCostModel derivatives require a positive max_charge_rate; "
+                "the cost is discontinuous at zero."
+            )
+        capex = capacity * conversion * capacity_capex + charge_rate * charge_capex
+        derivatives = {
+            "max_charge_rate": charge_capex,
+            "storage_capacity": conversion * capacity_capex,
+            "capacity_capex": capacity * conversion,
+            "charge_capex": charge_rate,
+        }
+        for name, value in derivatives.items():
+            partials["CapEx", name] = value
+            partials["OpEx", name] = fraction * value
+        partials["OpEx", "opex_fraction"] = capex

@@ -257,6 +257,10 @@ class CostModelBaseClass(SkippableComputeMixin, om.ExplicitComponent):
 
     Options:
         - skip_compute (bool): see :class:`SkippableComputeMixin`.
+
+    A concrete cost model can explicitly set ``_cost_year_is_constant = True`` when its
+    ``cost_year`` output is always the configured value. Component-based optimization then
+    connects that fixed year independently of the continuous cost outputs.
     """
 
     # Flag to indicate steppability. This flag should be overwritten by a subclass when that

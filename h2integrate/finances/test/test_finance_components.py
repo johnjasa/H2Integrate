@@ -1,8 +1,41 @@
 import numpy as np
 import pytest
 import openmdao.api as om
+from openmdao.utils.assert_utils import assert_check_partials
 
-from h2integrate.finances.finances import AdjustedCapacityFactorComp
+from h2integrate.finances.finances import AdjustedCapexOpexComp, AdjustedCapacityFactorComp
+
+
+@pytest.mark.unit
+def test_adjusted_cost_partials():
+    plant_config = {
+        "plant": {"plant_life": 3},
+        "finance_parameters": {
+            "cost_adjustment_parameters": {
+                "cost_year_adjustment_inflation": 0.025,
+                "target_dollar_year": 2022,
+            }
+        },
+    }
+    prob = om.Problem(reports=False)
+    prob.model.add_subsystem(
+        "cost",
+        AdjustedCapexOpexComp(
+            plant_config=plant_config, tech_configs={"battery": {}, "solar": {}}, driver_config={}
+        ),
+    )
+    prob.setup()
+    for tech, year in (("battery", 2020), ("solar", 2024)):
+        prob.set_val(f"cost.cost_year_{tech}", year)
+        prob.set_val(f"cost.capex_{tech}", 100.0)
+        prob.set_val(f"cost.opex_{tech}", 5.0)
+        prob.set_val(f"cost.varopex_{tech}", [1.0, 2.0, 3.0])
+    prob.run_model()
+    assert_check_partials(
+        prob.check_partials(out_stream=None, method="fd", form="central", step=1e-4),
+        atol=1e-7,
+        rtol=1e-7,
+    )
 
 
 @pytest.fixture
