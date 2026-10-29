@@ -59,10 +59,12 @@ def _script_param(script):
         )
     if script == "39_differentiable_dispatch/run_differentiable_dispatch.py":
         from h2integrate.control.differentiable import kkt_tools_available
+        from h2integrate.control.differentiable.cached_ipopt import cached_ipopt_available
 
         marks.append(
             pytest.mark.skipif(
-                not kkt_tools_available(), reason="Ipopt and PyNumero ASL are not available"
+                not (kkt_tools_available() and cached_ipopt_available()),
+                reason="Ipopt, its shared library, and PyNumero ASL are not available",
             )
         )
     return pytest.param(script, marks=marks, id=script)

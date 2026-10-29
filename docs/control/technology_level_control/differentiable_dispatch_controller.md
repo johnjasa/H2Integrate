@@ -94,10 +94,35 @@ Example 39 uses a mixture of analytic, KKT, and component-level finite-differenc
   the first `n_control_window` steps of each. The stored amount is carried between windows, and
   reverse-mode derivatives sweep backward through the chain of windows.
 
-Both modes give identical results when the window covers the whole simulation. A full-year
-(8760-hour) `full_horizon` solve takes roughly 10 seconds, and an exact reverse-mode gradient
-takes well under a second more. Rolling mode solves one small problem per window, so it is slower
-in total.
+Both modes give identical results when the window covers the whole simulation. Rolling mode
+changes the control problem when the look-ahead is shorter and may be slower because it solves
+many windows. H2I's separate time-marching solver does not support this controller or its
+full-plant derivative chain.
+
+Example 39 has no system-level controller or plant feedback loop: it uses the battery's
+technology-level controller, and the plant runs once per optimizer evaluation. The controller
+still re-solves its dispatch problem when the design or generation inputs change.
+
+## Ipopt backend
+
+The default `solver_backend: shell` writes a new NL file and launches Ipopt for each dispatch
+solve. Set `solver_backend: cached` to reuse the PyNumero NLP and call the Ipopt shared library
+in-process. This preserves the full-horizon formulation and KKT derivatives. Example 39 selects
+the cached backend.
+
+The cached backend requires a loadable Ipopt shared library with the standard 32-bit-index C
+interface, in addition to PyNumero. The IDAES solver extensions provide one on supported
+platforms. It currently supports minimization, requires
+`fixed_variable_treatment: make_parameter`, and rejects Pyomo export suffixes. A changed mutable
+Pyomo parameter triggers an NLP rebuild. Changing the objective, constraints, decision-variable
+bounds, or other fixed variables is unsupported; build a new adapter for those changes.
+Use `shell` if these restrictions or the shared-library requirement do not suit the model.
+
+On one Windows run of example 39, the full-year SLSQP sizing study took 162 seconds with the
+cached backend versus 282 seconds with the shell backend, with the same reported design and
+evaluation counts. In a separate paired check with the current backend, a repeated model
+evaluation took 6.4 seconds cached versus 9.5 seconds with the shell. Timings depend on the
+machine and solver behavior.
 
 ## Configuration
 
@@ -119,12 +144,13 @@ are the same as for the open-loop storage controllers.
 | `derivatives` | `adjoint` | `adjoint`, `fd`, or `none`. |
 | `flow_scale` | computed | Flow normalization; defaults to the largest of the rate limits and the mean set-point. |
 | `solver_options` | `{}` | Extra Ipopt options. |
+| `solver_backend` | `shell` | `shell` or `cached`; see the backend requirements above. |
 
 The battery in `examples/39_differentiable_dispatch` uses this controller:
 
 ```{literalinclude} ../../../examples/39_differentiable_dispatch/tech_config.yaml
 :language: yaml
-:lines: 79-114
+:lines: 79-115
 ```
 
 ## Example: gradient-based sizing through the dispatch

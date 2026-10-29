@@ -107,6 +107,7 @@ technologies:
         smoothing_quadratic_weight: 1.0e-4
         smoothing_barrier_mu: 1.0e-6
         derivatives: adjoint  # "adjoint", "fd", or "none"
+        solver_backend: cached  # "cached" reuses the NLP; "shell" writes a new NL file per solve
       cost_parameters:
         capacity_capex: 173000  # USD/MW*h, 173 USD/kW*h
         charge_capex: 750000  # USD/MW (multiplied by charge rate), 750 USD/kW

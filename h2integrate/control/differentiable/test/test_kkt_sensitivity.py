@@ -3,6 +3,7 @@ import pytest
 import pyomo.environ as pyo
 from pyomo.opt import SolverResults
 
+from h2integrate.control.differentiable.cached_ipopt import CachedIpopt, cached_ipopt_available
 from h2integrate.control.differentiable.kkt_sensitivity import KKTSensitivity, kkt_tools_available
 
 
@@ -12,6 +13,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 P0 = 0.3
+requires_cached_ipopt = pytest.mark.skipif(
+    not cached_ipopt_available(), reason="the Ipopt shared library is not available"
+)
 
 
 def _equality_qp():
@@ -159,3 +163,163 @@ def test_stalled_solver_is_not_treated_as_optimal(monkeypatch):
     sensitivity._solver = results
     with pytest.raises(RuntimeError, match="Search Direction becomes Too Small"):
         sensitivity.solve([P0])
+
+
+@pytest.mark.unit
+@requires_cached_ipopt
+@pytest.mark.parametrize("barrier_mu", [0.0, 1e-4])
+def test_cached_solver_matches_shell_and_derivatives(barrier_mu, subtests):
+    models = [_bounded_qp(), _bounded_qp()]
+    shell, cached = [
+        KKTSensitivity(
+            model,
+            [model.p[0], model.p[1], model.p[2]],
+            barrier_mu=barrier_mu,
+            solver_backend=backend,
+        )
+        for model, backend in zip(models, ("shell", "cached"))
+    ]
+    for values in (np.array([3.0, 0.5, 1.2]), np.array([3.1, 0.6, 1.1])):
+        shell_solution = shell.solve(values)
+        cached_solution = cached.solve(values)
+        with subtests.test("primals and objective", values=values):
+            assert cached_solution.x == pytest.approx(shell_solution.x, abs=1e-7)
+            assert cached_solution.objective == pytest.approx(shell_solution.objective, abs=1e-8)
+        with subtests.test("jacobian", values=values):
+            assert cached_solution.linearization.jacobian() == pytest.approx(
+                shell_solution.linearization.jacobian(), abs=1e-6
+            )
+        with subtests.test("model duals and bound multipliers", values=values):
+            for con0, con1 in zip(shell._constraints, cached._constraints):
+                assert models[1].dual[con1] == pytest.approx(models[0].dual[con0], abs=1e-7)
+            for name in ("ipopt_zL_out", "ipopt_zU_out"):
+                for v0, v1 in zip(shell._x_vars, cached._x_vars):
+                    assert getattr(models[1], name).get(v1, 0.0) == pytest.approx(
+                        getattr(models[0], name).get(v0, 0.0), abs=1e-7
+                    )
+
+
+@pytest.mark.unit
+@requires_cached_ipopt
+def test_cached_solver_refreshes_mutable_parameters():
+    model = _equality_qp()
+    model.coefficient = pyo.Param(initialize=1.0, mutable=True)
+    model.obj.set_value(model.obj.expr + model.coefficient * model.x1 * model.p)
+    sensitivity = KKTSensitivity(model, [model.p], solver_backend="cached")
+    first = sensitivity.solve([P0])
+    model.coefficient.set_value(2.0)
+    second = sensitivity.solve([P0])
+    assert first.x != pytest.approx(second.x, abs=1e-4)
+    for coefficient, cached_solution in ((1.0, first), (2.0, second)):
+        shell_model = _equality_qp()
+        shell_model.coefficient = pyo.Param(initialize=coefficient, mutable=True)
+        shell_model.obj.set_value(
+            shell_model.obj.expr + shell_model.coefficient * shell_model.x1 * shell_model.p
+        )
+        shell = KKTSensitivity(shell_model, [shell_model.p])
+        reference = shell.solve([P0])
+        assert cached_solution.x == pytest.approx(reference.x, abs=1e-8)
+        assert cached_solution.linearization.jacobian() == pytest.approx(
+            reference.linearization.jacobian(), abs=1e-8
+        )
+
+
+@pytest.mark.unit
+@requires_cached_ipopt
+def test_cached_solver_rejects_nonoptimal_and_unsupported_cases():
+    model = _equality_qp()
+    model.obj.sense = pyo.maximize
+    with pytest.raises(ValueError, match="minimization only"):
+        KKTSensitivity(model, [model.p], solver_backend="cached")
+    model = pyo.ConcreteModel()
+    model.p = pyo.Var(initialize=-1.0)
+    model.p.fix()
+    model.x = pyo.Var(bounds=(0, None), initialize=1.0)
+    model.c = pyo.Constraint(expr=model.x == model.p)
+    model.obj = pyo.Objective(expr=model.x**2)
+    sensitivity = KKTSensitivity(model, [model.p], solver_backend="cached")
+    with pytest.raises(RuntimeError, match="did not converge"):
+        sensitivity.solve([-1.0])
+
+
+@pytest.mark.unit
+@requires_cached_ipopt
+def test_cached_solver_rejects_export_suffixes_and_relaxed_parameters():
+    model = _equality_qp()
+    model.scaling_factor = pyo.Suffix(direction=pyo.Suffix.EXPORT)
+    model.scaling_factor[model.x1] = 2.0
+    with pytest.raises(ValueError, match="does not support export suffix"):
+        KKTSensitivity(model, [model.p], solver_backend="cached")
+    model = _equality_qp()
+    sensitivity = KKTSensitivity(model, [model.p], solver_backend="cached")
+    model.scaling_factor = pyo.Suffix(direction=pyo.Suffix.EXPORT)
+    model.scaling_factor[model.x1] = 2.0
+    with pytest.raises(ValueError, match="does not support export suffix"):
+        sensitivity.solve([P0])
+    model.del_component(model.scaling_factor)
+    sensitivity.solver_options["fixed_variable_treatment"] = "relax_bounds"
+    with pytest.raises(ValueError, match="requires fixed_variable_treatment"):
+        sensitivity.solve([P0])
+    sensitivity.solver_options.pop("fixed_variable_treatment")
+    model.x1.setlb(-1.0)
+    with pytest.raises(RuntimeError, match="changing decision-variable bounds"):
+        sensitivity.solve([P0])
+
+
+@pytest.mark.unit
+@requires_cached_ipopt
+def test_cached_solver_rejects_problem_mutation(subtests):
+    with subtests.test("objective"):
+        model = _equality_qp()
+        sensitivity = KKTSensitivity(model, [model.p], solver_backend="cached")
+        model.obj.set_value(model.x1**2)
+        with pytest.raises(RuntimeError, match="changing the objective"):
+            sensitivity.solve([P0])
+    with subtests.test("constraints"):
+        model = _equality_qp()
+        sensitivity = KKTSensitivity(model, [model.p], solver_backend="cached")
+        model.sum_one.set_value(model.x1 + model.x2 == 2)
+        with pytest.raises(RuntimeError, match="changing constraints"):
+            sensitivity.solve([P0])
+    with subtests.test("other fixed variables"):
+        model = _equality_qp()
+        model.q = pyo.Var(initialize=1.0)
+        model.q.fix()
+        model.obj.set_value(model.obj.expr + model.q * model.x1)
+        sensitivity = KKTSensitivity(model, [model.p], solver_backend="cached")
+        model.q.set_value(2.0)
+        with pytest.raises(RuntimeError, match="changing other fixed variables"):
+            sensitivity.solve([P0])
+    with subtests.test("fixed decision variables"):
+        model = _equality_qp()
+        sensitivity = KKTSensitivity(model, [model.p], solver_backend="cached")
+        model.x1.fix()
+        with pytest.raises(RuntimeError, match="fixing decision variables"):
+            sensitivity.solve([P0])
+
+
+@pytest.mark.unit
+@requires_cached_ipopt
+def test_cached_solver_surfaces_callback_errors(monkeypatch):
+    model = _equality_qp()
+    sensitivity = KKTSensitivity(model, [model.p], solver_backend="cached")
+
+    def fail():
+        raise ValueError("objective evaluation failed")
+
+    monkeypatch.setattr(sensitivity._nlp, "evaluate_objective", fail)
+    with pytest.raises(RuntimeError, match="could not evaluate") as exc:
+        sensitivity.solve([P0])
+    assert str(exc.value.__cause__) == "objective evaluation failed"
+
+
+@pytest.mark.unit
+def test_cached_solver_reports_unavailable_library(monkeypatch):
+    def missing(_self):
+        raise RuntimeError("no shared Ipopt library")
+
+    monkeypatch.setattr(CachedIpopt, "_load_library", missing)
+    assert not cached_ipopt_available()
+    model = _equality_qp()
+    with pytest.raises(RuntimeError, match="no shared Ipopt library"):
+        KKTSensitivity(model, [model.p], solver_backend="cached")

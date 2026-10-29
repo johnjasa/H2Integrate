@@ -59,6 +59,8 @@ class DifferentiableDispatchStorageControllerConfig(OpenLoopControlBaseConfig):
             ``commodity_rate_units``. Defaults to the largest of ``max_charge_rate``,
             ``max_discharge_rate``, and the mean absolute ``demand_profile``.
         solver_options (dict): Extra Ipopt options.
+        solver_backend (str): ``"shell"`` writes an NL file for each Ipopt solve. ``"cached"``
+            reuses the PyNumero NLP and calls a shared Ipopt library in-process.
     """
 
     require_storage_parameters = True
@@ -80,6 +82,7 @@ class DifferentiableDispatchStorageControllerConfig(OpenLoopControlBaseConfig):
     derivatives: str = field(default="adjoint", validator=validators.in_(["adjoint", "fd", "none"]))
     flow_scale: float | None = field(default=None)
     solver_options: dict = field(factory=dict)
+    solver_backend: str = field(default="shell", validator=validators.in_(["shell", "cached"]))
 
     def __attrs_post_init__(self):
         super().__attrs_post_init__()
@@ -286,6 +289,7 @@ class DifferentiableDispatchStorageController(OpenLoopControlBase):
                 params,
                 solver_options=self.config.solver_options,
                 barrier_mu=self.config.smoothing_barrier_mu,
+                solver_backend=self.config.solver_backend,
             )
             self._windows[n_steps] = _DispatchWindow(sensitivity, model, n_steps)
         return self._windows[n_steps]

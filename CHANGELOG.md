@@ -28,6 +28,7 @@
   - The controller is a drop-in replacement for `DemandOpenLoopStorageController`, with user-selectable full-horizon or rolling-horizon dispatch, quadratic and log-barrier smoothing, and adjoint, finite-difference, or no derivatives.
   - Added `examples/39_differentiable_dispatch`, which runs the example 13 plant with the new controller.
 - Added opt-in component-based total derivatives and mixed-derivative support for example 39's H2I optimization path. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
+- Added an optional cached in-process Ipopt backend for differentiable dispatch and enabled it in example 39. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
 
 
 ## 0.10.0 [October 12, 2026]

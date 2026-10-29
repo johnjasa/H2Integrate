@@ -3357,13 +3357,15 @@ def _kkt_tools_available():
     if importlib.util.find_spec("idaes") is None:
         return False
     from h2integrate.control.differentiable import kkt_tools_available
+    from h2integrate.control.differentiable.cached_ipopt import cached_ipopt_available
 
-    return kkt_tools_available()
+    return kkt_tools_available() and cached_ipopt_available()
 
 
 @pytest.mark.examples
 @pytest.mark.skipif(
-    not _kkt_tools_available(), reason="the dol extra (Ipopt and PyNumero) is not available"
+    not _kkt_tools_available(),
+    reason="the dol extra (Ipopt, shared library and PyNumero) is missing",
 )
 @pytest.mark.parametrize(
     "example_folder,resource_example_folder", [("39_differentiable_dispatch", None)]

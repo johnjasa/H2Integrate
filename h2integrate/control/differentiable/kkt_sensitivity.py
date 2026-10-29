@@ -19,9 +19,9 @@ Model requirements:
   during each solve and unfixed only to build the PyNumero NLP.
 - Variable bounds must not depend on parameters. Write parameter-dependent limits as
   constraints with slack variables instead.
-- The PyNumero NLP is built once, so mutable Pyomo ``Param`` values are frozen into it. A
-  mutable ``Param`` may change between solves only if it enters the objective linearly (for
-  example a cost coefficient), because then it does not affect the Hessian or the constraints.
+- The PyNumero NLP is cached. With the default shell backend, mutable Pyomo ``Param`` values are
+  frozen into that NLP, so they may change only when the change does not affect the KKT Hessian
+  or constraints. The cached backend rebuilds its NLP when a mutable ``Param`` changes.
 
 Setting ``barrier_mu > 0`` adds an explicit log-barrier term, ``-barrier_mu * sum(log(x - x_L))``
 (and the matching upper-bound terms), to the objective for every bounded decision variable. The
@@ -194,6 +194,7 @@ class KKTSolution:
         self.x = x
         self.objective = objective
         self._sensitivity = sensitivity
+        self._nlp = sensitivity._nlp
         self._state = (primals, duals, z_lower, z_upper)
         self._linearization = None
 
@@ -201,7 +202,7 @@ class KKTSolution:
     def linearization(self) -> KKTLinearization:
         """KKT factorization at this solution (computed on first access)."""
         if self._linearization is None:
-            self._linearization = self._sensitivity._linearize(*self._state)
+            self._linearization = self._sensitivity._linearize(*self._state, nlp=self._nlp)
         return self._linearization
 
 
@@ -219,6 +220,8 @@ class KKTSensitivity:
             ``log(x - x_L + barrier_offset)``. It keeps the barrier finite when constraints force a
             variable exactly onto its bound (for example a flow limited by a zero input), much
             like Ipopt's own bound relaxation.
+        solver_backend (str): ``"shell"`` (default) or ``"cached"``. The latter calls an Ipopt
+            shared library in-process and reuses the PyNumero NLP across solves.
     """
 
     default_solver_options: ClassVar[dict] = {
@@ -228,20 +231,35 @@ class KKTSensitivity:
         "honor_original_bounds": "no",
     }
 
-    def __init__(self, model, parameters, solver_options=None, barrier_mu=0.0, barrier_offset=1e-6):
+    def __init__(
+        self,
+        model,
+        parameters,
+        solver_options=None,
+        barrier_mu=0.0,
+        barrier_offset=1e-6,
+        solver_backend="shell",
+    ):
         _require_kkt_tools()
         from pyomo.contrib.pynumero.interfaces.pyomo_nlp import PyomoNLP
 
+        if solver_backend not in ("shell", "cached"):
+            raise ValueError(f"Unknown Ipopt solver backend {solver_backend!r}.")
         self.model = model
         self.parameters = list(parameters)
         self.barrier_mu = float(barrier_mu)
         self.barrier_offset = float(barrier_offset)
+        self.solver_backend = solver_backend
 
         objectives = list(model.component_data_objects(pyo.Objective, active=True))
         if len(objectives) != 1:
             msg = f"Model must have exactly one active objective, found {len(objectives)}"
             raise ValueError(msg)
         self._objective = objectives[0]
+        if solver_backend == "cached" and self._objective.sense != pyo.minimize:
+            raise ValueError("The cached Ipopt backend currently supports minimization only.")
+        if solver_backend == "cached":
+            self._validate_cached_suffixes()
         if self.barrier_mu > 0.0:
             self._add_barrier_objective()
 
@@ -283,6 +301,94 @@ class KKTSensitivity:
         if solver_options:
             self.solver_options.update(solver_options)
         self._solver = pyo.SolverFactory("ipopt")
+        self._cached_solver = None
+        if self.solver_backend == "cached":
+            from h2integrate.control.differentiable.cached_ipopt import CachedIpopt
+
+            self._mutable_params = [
+                p
+                for p in model.component_data_objects(pyo.Param, active=True)
+                if p.parent_component().mutable
+            ]
+            self._cached_objective = next(model.component_data_objects(pyo.Objective, active=True))
+            self._cached_objective_expr = self._cached_objective.expr
+            self._cached_constraints = tuple(
+                (constraint, constraint.expr)
+                for constraint in model.component_data_objects(pyo.Constraint, active=True)
+            )
+            parameter_ids = {id(param) for param in self.parameters}
+            self._other_fixed_vars = tuple(
+                (var, var.value)
+                for var in model.component_data_objects(pyo.Var, active=True)
+                if var.fixed and id(var) not in parameter_ids
+            )
+            self._mutable_values = self._get_mutable_values()
+            self._cached_solver = CachedIpopt(self._nlp, self.solver_options)
+
+    def _get_mutable_values(self):
+        return tuple(pyo.value(param) for param in self._mutable_params)
+
+    def _validate_cached_suffixes(self):
+        for suffix in self.model.component_objects(pyo.Suffix, active=True, descend_into=True):
+            if suffix.export_enabled() and len(suffix):
+                raise ValueError(
+                    f"Cached Ipopt does not support export suffix {suffix.name!r}; "
+                    "use the shell backend."
+                )
+
+    def _validate_cached_structure(self):
+        objectives = iter(self.model.component_data_objects(pyo.Objective, active=True))
+        objective = next(objectives, None)
+        if (
+            objective is not self._cached_objective
+            or objective.expr is not self._cached_objective_expr
+            or next(objectives, None) is not None
+        ):
+            raise RuntimeError("Cached Ipopt does not support changing the objective.")
+        constraints = iter(self.model.component_data_objects(pyo.Constraint, active=True))
+        for expected, expression in self._cached_constraints:
+            constraint = next(constraints, None)
+            if constraint is not expected or constraint.expr is not expression:
+                raise RuntimeError("Cached Ipopt does not support changing constraints.")
+        if next(constraints, None) is not None:
+            raise RuntimeError("Cached Ipopt does not support changing constraints.")
+        for var, value in self._other_fixed_vars:
+            if not var.fixed or var.value != value:
+                raise RuntimeError("Cached Ipopt does not support changing other fixed variables.")
+
+    def _refresh_cached_nlp(self):
+        """Rebuild the cached NLP when a mutable Pyomo parameter changes."""
+        values = self._get_mutable_values()
+        if values == self._mutable_values:
+            return
+        from pyomo.contrib.pynumero.interfaces.pyomo_nlp import PyomoNLP
+
+        from h2integrate.control.differentiable.cached_ipopt import CachedIpopt
+
+        for param in self.parameters:
+            param.unfix()
+        try:
+            nlp = PyomoNLP(self.model)
+        finally:
+            for param in self.parameters:
+                param.fix()
+        variables = nlp.get_pyomo_variables()
+        constraints = nlp.get_pyomo_constraints()
+        if (
+            len(variables) != len(self._all_vars)
+            or len(constraints) != len(self._constraints)
+            or any(a is not b for a, b in zip(variables, self._all_vars))
+            or any(a is not b for a, b in zip(constraints, self._constraints))
+        ):
+            raise RuntimeError("The cached Ipopt problem structure changed during a rebuild.")
+        if not (
+            np.array_equal(nlp.primals_lb()[self._x_idx], self._x_lb)
+            and np.array_equal(nlp.primals_ub()[self._x_idx], self._x_ub)
+        ):
+            raise RuntimeError("Cached Ipopt does not support changing decision-variable bounds.")
+        self._nlp = nlp
+        self._cached_solver = CachedIpopt(nlp, self.solver_options)
+        self._mutable_values = values
 
     def _add_barrier_objective(self):
         """Replace the objective with ``f - mu * sum(log(bound gaps))`` for smoothing.
@@ -369,6 +475,9 @@ class KKTSensitivity:
         for p, val in zip(self.parameters, param_values):
             p.fix(float(val))
 
+        if self.solver_backend == "cached":
+            return self._solve_cached(param_values, linearize)
+
         results = self._solver.solve(
             self.model, tee=False, options=self.solver_options, load_solutions=False
         )
@@ -404,8 +513,62 @@ class KKTSensitivity:
             _ = solution.linearization
         return solution
 
-    def _linearize(self, primals, duals, z_lower, z_upper) -> KKTLinearization:
-        nlp = self._nlp
+    def _solve_cached(self, param_values, linearize):
+        self._validate_cached_suffixes()
+        self._validate_cached_structure()
+        for var, lower, upper in zip(self._x_vars, self._x_lb, self._x_ub):
+            if var.fixed:
+                raise RuntimeError("Cached Ipopt does not support fixing decision variables.")
+            current_lower = -np.inf if var.lb is None else var.lb
+            current_upper = np.inf if var.ub is None else var.ub
+            if current_lower != lower or current_upper != upper:
+                raise RuntimeError(
+                    "Cached Ipopt does not support changing decision-variable bounds."
+                )
+        self._refresh_cached_nlp()
+        self._cached_solver.set_options(self.solver_options)
+        primals = self._nlp.init_primals().copy()
+        for i, var in enumerate(self._all_vars):
+            if var.value is not None:
+                primals[i] = var.value
+        primals, duals, z_lower, z_upper = self._cached_solver.solve(
+            primals, self._param_idx, param_values
+        )
+        self._nlp.set_primals(primals)
+        residual = np.abs(self._nlp.evaluate_eq_constraints())
+        if residual.size and residual.max() > 1e-6 * max(1.0, np.abs(primals).max()):
+            raise RuntimeError(
+                f"Ipopt returned an infeasible point (max residual {residual.max():.3e})"
+            )
+        for var, value in zip(self._all_vars, primals):
+            var.set_value(float(value), skip_validation=True)
+        self.model.dual.clear()
+        self.model.ipopt_zL_out.clear()
+        self.model.ipopt_zU_out.clear()
+        for con, value in zip(self._constraints, duals):
+            self.model.dual[con] = -float(value)
+        for i, var in enumerate(self._all_vars):
+            if z_lower[i]:
+                self.model.ipopt_zL_out[var] = float(z_lower[i])
+            if z_upper[i]:
+                self.model.ipopt_zU_out[var] = float(z_upper[i])
+        objective = float(pyo.value(self._objective))
+        solution = KKTSolution(
+            primals[self._x_idx],
+            objective,
+            self,
+            primals,
+            duals,
+            np.abs(z_lower[self._x_idx]),
+            np.abs(z_upper[self._x_idx]),
+        )
+        if linearize:
+            _ = solution.linearization
+        return solution
+
+    def _linearize(self, primals, duals, z_lower, z_upper, nlp=None) -> KKTLinearization:
+        if nlp is None:
+            nlp = self._nlp
         nlp.set_primals(primals)
         nlp.set_duals(duals)
         nlp.set_obj_factor(1.0)

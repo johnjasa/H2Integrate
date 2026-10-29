@@ -3,6 +3,7 @@ import pytest
 import openmdao.api as om
 
 from h2integrate.storage.storage_performance_model import StoragePerformanceModel
+from h2integrate.control.differentiable.cached_ipopt import cached_ipopt_available
 from h2integrate.control.differentiable.kkt_sensitivity import kkt_tools_available
 from h2integrate.control.control_strategies.storage.demand_openloop_storage_controller import (
     DemandOpenLoopStorageController,
@@ -191,6 +192,31 @@ def test_rolling_matches_full_horizon_when_window_is_full():
     assert rolling.get_val("electricity_command_value") == pytest.approx(
         full.get_val("electricity_command_value"), abs=1e-8
     )
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(
+    not cached_ipopt_available(), reason="the Ipopt shared library is not available"
+)
+@pytest.mark.parametrize("horizon_mode", ["full_horizon", "rolling"])
+def test_cached_solver_matches_shell_with_varying_penalties(horizon_mode):
+    settings = {
+        "dispatch_horizon_mode": horizon_mode,
+        "n_horizon_window": 8,
+        "n_control_window": 4,
+        "unmet_demand_penalty": np.linspace(20.0, 100.0, N_STEPS).tolist(),
+    }
+    shell = _build_problem(solver_backend="shell", **settings)
+    cached = _build_problem(solver_backend="cached", **settings)
+    for rate in (10.0, 9.0):
+        for problem in (shell, cached):
+            problem.set_val("max_charge_rate", rate, units="MW")
+            problem.run_model()
+        assert _output_vector(cached) == pytest.approx(_output_vector(shell), abs=1e-6)
+        direction = [np.ones_like(value) for value in _input_vector(shell)[1]]
+        assert _jacvec(cached, direction) == pytest.approx(
+            _jacvec(shell, direction), rel=1e-5, abs=1e-6
+        )
 
 
 @pytest.mark.unit
