@@ -45,7 +45,7 @@ class SimpleASUPerformanceConfig(BaseConfig):
     N2_fraction_in_air: float = field(default=0.7811, validator=range_val(0, 1))
     O2_fraction_in_air: float = field(default=0.2096, validator=range_val(0, 1))
     Ar_fraction_in_air: float = field(default=0.0093, validator=range_val(0, 1))
-    efficiency_kWh_pr_kg_N2: float = field(default=0.29, validator=range_val(0.10, 0.50))
+    efficiency_kWh_pr_kg_N2: float = field(default=0.29, validator=range_val(0.10, 1.0))
     # 0.29 is efficiency of pressure swing absorption
     # 0.119 is efficiency of cryogenic
 
