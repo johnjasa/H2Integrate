@@ -1,0 +1,7 @@
+name: H2Integrate_config
+system_summary: >
+  A 24-hour system-level optimization window for solar, battery, and grid
+  dispatch demonstrating solar export during grid charging without direct resale.
+driver_config: driver_config.yaml
+plant_config: plant_config.yaml
+technology_config: tech_config.yaml

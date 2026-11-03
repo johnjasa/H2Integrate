@@ -1,10 +1,9 @@
 name: H2Integrate_config
 system_summary: >
-  A merchant battery added to an existing solar plant in west Texas that
-  arbitrages an hourly locational marginal price series. A rolling-horizon
-  linear program at the system level co-optimizes battery charge/discharge,
-  grid imports, and grid exports, and an outer parameter sweep traces the net
-  present value of the addition against battery energy capacity.
+  Solar and a merchant battery added to an existing wind and solar plant in west
+  Texas. A rolling-horizon mixed-integer program co-optimizes battery dispatch,
+  grid imports, and exports against hourly prices, while a parameter sweep
+  traces the net present value of the addition against battery energy capacity.
 driver_config: driver_config.yaml
 plant_config: plant_config.yaml
 technology_config: tech_config.yaml

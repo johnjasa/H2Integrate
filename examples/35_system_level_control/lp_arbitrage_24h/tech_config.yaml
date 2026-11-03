@@ -1,0 +1,97 @@
+name: technology_config
+description: Synthetic solar generation, battery storage, and grid interconnections.
+technologies:
+  solar:
+    performance_model:
+      model: ExampleSolarProfilePerformanceModel
+      model_location: example_solar_profile.py
+    cost_model:
+      model: GenericConverterCostModel
+    model_inputs:
+      performance_parameters:
+        # This 24-hour profile repeats over the annual plant horizon.
+        production_profile: [20000., 20000., 20000., 20000., 20000., 20000., 20000., 20000., 20000., 20000., 20000., 20000.,
+          0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]
+      cost_parameters:
+        commodity: electricity
+        commodity_rate_units: kW
+        cost_year: 2024
+        unit_capex: 0.
+        unit_opex: 0.
+        unit_varopex: 0.
+  battery:
+    performance_model:
+      model: StoragePerformanceModel
+    cost_model:
+      model: GenericStorageCostModel
+    model_inputs:
+      shared_parameters:
+        commodity: electricity
+        commodity_rate_units: kW
+        max_charge_rate: 50000.
+        max_capacity: 200000.
+        init_soc_fraction: 0.1
+        min_soc_fraction: 0.1
+        max_soc_fraction: 1.0
+      performance_parameters:
+        round_trip_efficiency: 0.88
+        demand_profile: 0.
+      cost_parameters:
+        cost_year: 2024
+        capacity_capex: 0.
+        charge_capex: 0.
+        opex_fraction: 0.
+  grid_buy:
+    performance_model:
+      model: GridPerformanceModel
+    cost_model:
+      model: GridCostModel
+    model_inputs:
+      shared_parameters:
+        interconnection_size: 50000.
+      cost_parameters:
+        cost_year: 2024
+        electricity_buy_price: 0.03
+        buy_price_mode: per_timestep
+        interconnection_capex_per_kw: 0.
+        interconnection_opex_per_kw: 0.
+        fixed_interconnection_cost: 0.
+  grid_sell:
+    performance_model:
+      model: GridPerformanceModel
+    cost_model:
+      model: GridCostModel
+    model_inputs:
+      shared_parameters:
+        interconnection_size: 100000.
+      cost_parameters:
+        cost_year: 2024
+        electricity_sell_price: 0.05
+        sell_price_mode: per_timestep
+        interconnection_capex_per_kw: 0.
+        interconnection_opex_per_kw: 0.
+        fixed_interconnection_cost: 0.
+  charge_combiner:
+    performance_model:
+      model: GenericCombinerPerformanceModel
+    model_inputs:
+      performance_parameters:
+        commodity: electricity
+        commodity_rate_units: kW
+        in_streams: 2
+  output_combiner:
+    performance_model:
+      model: GenericCombinerPerformanceModel
+    model_inputs:
+      performance_parameters:
+        commodity: electricity
+        commodity_rate_units: kW
+        in_streams: 2
+  electrical_load_demand:
+    performance_model:
+      model: GenericDemandComponent
+    model_inputs:
+      performance_parameters:
+        commodity: electricity
+        commodity_rate_units: kW
+        demand_profile: 0.

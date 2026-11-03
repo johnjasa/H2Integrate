@@ -71,6 +71,7 @@
 - Updates to all GH Actions, pre-commit, isort, and ruff versioning. [PR 904](https://github.com/NatLabRockies/H2Integrate/pull/904)
 - Update API resource models to be able to be able to handle nonannual simulations. [PR 897](https://github.com/NatLabRockies/H2Integrate/pull/897)
 - Move PySAM model instantiation for wind and solar performance models to the `compute()` method, and validate recalculated wind power curves. [PR 909](https://github.com/NatLabRockies/H2Integrate/pull/909)
+- Prevent same-timestep grid resale in the arbitrage controller, expand the full-year example, and add a 24-hour solar and grid dispatch demonstration. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
 
 ## 0.9 [August 10, 2026]
 

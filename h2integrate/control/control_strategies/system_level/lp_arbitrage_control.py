@@ -30,7 +30,8 @@ class LPArbitrageControlConfig(BaseConfig):
         cost_per_tech (dict): Marginal-cost specification for each dispatchable
             technology, using the same syntax as ``CostMinimizationControl``.
             Each entry may be a numeric value, ``"buy_price"``, ``"VarOpEx"``,
-            or ``"feedstock"``. Defaults to an empty dict.
+            or ``"feedstock"``. Grid imports are dispatched at the sell price
+            regardless of this setting. Defaults to an empty dict.
         value_of_lost_load (float): Penalty applied to unmet demand, in
             ``USD/(commodity_rate_unit*h)``. Acts as the price of the unmet-demand
             slack variable that keeps the linear program feasible. Defaults to
@@ -39,6 +40,9 @@ class LPArbitrageControlConfig(BaseConfig):
             plus discharge), in ``USD/(commodity_rate_unit*h)``. Represents
             degradation and breaks ties between equivalent dispatch schedules.
             Defaults to 0.0.
+        grid_import_techs (list[str] | None): Dispatchable grid import technologies.
+            Defaults to technologies using ``GridPerformanceModel``. Set explicitly
+            to include custom grid performance models.
         export_limit_component (str | None): Name of a demand component whose
             unmet demand caps exports at each timestep, in addition to the
             export technology's interconnection size. Used to value an addition
@@ -59,6 +63,7 @@ class LPArbitrageControlConfig(BaseConfig):
     cost_per_tech: dict = field(default={})
     value_of_lost_load: float = field(default=10.0, converter=float)
     storage_cycle_cost: float = field(default=0.0, converter=float)
+    grid_import_techs: list[str] | None = field(default=None)
     export_limit_component: str | None = field(default=None)
     surplus_source_component: str | None = field(default=None)
     solver_name: str = field(default="glpk")
@@ -67,9 +72,9 @@ class LPArbitrageControlConfig(BaseConfig):
 
 @register
 class LPArbitrageControl(SystemLevelControlBase):
-    """System-level controller that co-optimizes dispatch with a linear program.
+    """System-level controller that co-optimizes dispatch with a mixed-integer program.
 
-    Solves a rolling-horizon linear program that maximizes plant profit against
+    Solves a rolling-horizon mixed-integer linear program maximizing dispatch value against
     a time-varying sale price (for example, a locational marginal price series).
     It is aimed at solar-plus-storage arbitrage but is written generically over
     the technology classifiers, so any mix of fixed, flexible, dispatchable, and
@@ -116,18 +121,24 @@ class LPArbitrageControl(SystemLevelControlBase):
        This mirrors the ``charge_available`` clip inside the storage performance
        model, so the schedule the controller commands is one the storage model
        can actually follow.
+    5. Grid imports may serve demand or charge storage, but cannot be directly
+       resold or curtailed. Local production may still be exported while importing.
+    6. Each storage technology can charge or discharge, but not both in the
+       same timestep. This requires a mixed-integer capable solver.
 
     Fixed and flexible technologies are treated as must-run parameters rather
-    than decision variables. Flexible performance models (wind, solar) are
-    resource-driven and do not respond to a set-point, so their output is
-    availability, not a choice. Economic curtailment is therefore represented by
-    the ``curtail`` variable rather than by lowering a set-point.
+    than decision variables. Flexible technologies (wind, solar) are commanded
+    at rated production and their resource-driven output is treated as
+    availability. Economic curtailment is represented by the ``curtail``
+    variable rather than by lowering a set-point.
 
     Charging from the grid is permitted: the ``dispatch`` of an import
     technology raises the right-hand side of the charge-availability
     constraint. For this to be physically realizable the plant topology must
     actually route the import technology into the storage technology's
     commodity input.
+    Grid imports are dispatched using the export technology's sell price, while
+    the grid cost model continues to use its own buy price for financial results.
 
     **Valuing an addition to an existing plant**
 
@@ -175,14 +186,13 @@ class LPArbitrageControl(SystemLevelControlBase):
     assumed to be continuously adjustable between zero and rated production at
     a linear marginal cost. Thermal units, electrolyzers, and industrial loads
     generally have minimum stable operating points, start-up costs, and minimum
-    up and down times, none of which a linear program can express. See
+    up and down times, which are not modeled here. See
     :meth:`_build_lp_model`.
 
     TODO: Generalize the treatment of flexible technologies. They are pinned to
-    must-run parameters because the wind and solar performance models ignore
-    their command value. A flexible technology that does honor a set-point
-    should instead become a bounded decision variable so the optimizer can
-    curtail it directly. See :meth:`compute`.
+    must-run parameters and commanded at rated output. Modeling them as bounded
+    decision variables would allow the optimizer to curtail them directly.
+    See :meth:`compute`.
     """
 
     # Retries for transient solver-interface faults (see _solve_window).
@@ -281,6 +291,27 @@ class LPArbitrageControl(SystemLevelControlBase):
             for tech in self.dispatchable_techs
             if self.commodity in self._get_commodity_for_tech(tech)
         ]
+        configured_imports = self.config.grid_import_techs
+        if configured_imports is None:
+            technologies = self.options["tech_config"]["technologies"]
+            configured_imports = [
+                tech
+                for tech in self.lp_dispatchable_techs
+                if technologies[tech].get("performance_model", {}).get("model")
+                == "GridPerformanceModel"
+            ]
+        if not isinstance(configured_imports, list) or not all(
+            isinstance(tech, str) for tech in configured_imports
+        ):
+            raise ValueError("grid_import_techs must be a list of dispatchable technology names.")
+        if len(set(configured_imports)) != len(configured_imports) or (
+            set(configured_imports) - set(self.lp_dispatchable_techs)
+        ):
+            raise ValueError(
+                "grid_import_techs must contain unique dispatchable technologies "
+                "producing the controlled commodity."
+            )
+        self.lp_grid_import_techs = list(configured_imports)
         self.lp_must_run_techs = [
             tech
             for tech in (self.fixed_techs + self.flexible_techs)
@@ -456,7 +487,7 @@ class LPArbitrageControl(SystemLevelControlBase):
     # ------------------------------------------------------------------
 
     def _build_lp_model(self):
-        """Build the rolling-window linear program.
+        """Build the rolling-window mixed-integer linear program.
 
         The model is constructed once and re-solved for every window with
         updated mutable parameters, which avoids rebuilding Pyomo objects
@@ -487,17 +518,7 @@ class LPArbitrageControl(SystemLevelControlBase):
         commitment behavior. Output is bounded only from above by a single rated
         value, so any unit is free to sit anywhere between zero and rated in
         every timestep. Minimum stable generation, start-up and shutdown costs,
-        and minimum up and down times all require binary commitment variables,
-        which turns this into a mixed-integer program and rules out the
-        continuous solvers assumed by ``solver_name``.
-
-        TODO: Revisit simultaneous charge and discharge if the objective gains
-        terms that can make it profitable. The linear relaxation permits it, and
-        it is currently ruled out only because it is never optimal when prices
-        and ``storage_cycle_cost`` are such that cycling costs money. Negative
-        prices combined with ancillary-service revenue could break that, and
-        forbidding it needs a binary variable per storage technology per
-        timestep.
+        and minimum         up and down times all require additional binary commitment variables.
 
         Returns:
             pyo.ConcreteModel: The window-scale optimization model.
@@ -511,6 +532,7 @@ class LPArbitrageControl(SystemLevelControlBase):
         model.T = pyo.RangeSet(0, window_len - 1)
         model.S = pyo.Set(initialize=self.lp_storage_techs, ordered=True)
         model.D = pyo.Set(initialize=self.lp_dispatchable_techs, ordered=True)
+        model.G = pyo.Set(initialize=self.lp_grid_import_techs, within=model.D, ordered=True)
 
         # --- Mutable parameters, refreshed for every window ---------------
         model.must_run = pyo.Param(model.T, initialize=0.0, mutable=True)
@@ -562,8 +584,7 @@ class LPArbitrageControl(SystemLevelControlBase):
 
         model.charge = pyo.Var(model.S, model.T, bounds=_charge_bounds)
         model.discharge = pyo.Var(model.S, model.T, bounds=_discharge_bounds)
-        model.is_charging = pyo.Var(model.S, model.T, domain=pyo.Boolean)
-        model.is_discharging = pyo.Var(model.S, model.T, domain=pyo.Boolean)
+        model.is_charging = pyo.Var(model.S, model.T, domain=pyo.Binary)
         model.soc = pyo.Var(model.S, model.T, bounds=_soc_bounds)
         model.dispatch = pyo.Var(model.D, model.T, domain=pyo.NonNegativeReals)
         # Pyomo re-reads a mutable Param in a bound on every solve, so the
@@ -586,11 +607,14 @@ class LPArbitrageControl(SystemLevelControlBase):
 
         model.balance = pyo.Constraint(model.T, rule=_balance_rule)
 
-        def _charge_discharge_rule(m, s, t):
-            """Prevent simultaneous charging and discharging for a storage technology."""
-            return m.is_charging[s, t] + m.is_discharging[s, t] <= 1
+        def _charging_mode_rule(m, s, t):
+            return m.charge[s, t] <= m.max_charge[s] * m.is_charging[s, t]
 
-        model.charge_discharge = pyo.Constraint(model.S, model.T, rule=_charge_discharge_rule)
+        def _discharging_mode_rule(m, s, t):
+            return m.discharge[s, t] <= m.max_discharge[s] * (1 - m.is_charging[s, t])
+
+        model.charging_mode = pyo.Constraint(model.S, model.T, rule=_charging_mode_rule)
+        model.discharging_mode = pyo.Constraint(model.S, model.T, rule=_discharging_mode_rule)
 
         def _soc_rule(m, s, t):
             """Advance a storage technology's state of charge by its net flow, after losses."""
@@ -618,18 +642,24 @@ class LPArbitrageControl(SystemLevelControlBase):
 
         model.charge_availability = pyo.Constraint(model.T, rule=_charge_availability_rule)
 
+        def _grid_import_use_rule(m, t):
+            return sum(m.dispatch[g, t] for g in m.G) <= (
+                m.demand[t] - m.unmet[t] + sum(m.charge[s, t] for s in m.S)
+            )
+
+        if self.lp_grid_import_techs:
+            model.grid_import_use = pyo.Constraint(model.T, rule=_grid_import_use_rule)
+
         # --- Objective -----------------------------------------------------
         def _objective_rule(m):
-            """Return the profit earned over the window."""
+            """Return the dispatch value earned over the window."""
             revenue = sum(m.sell_price[t] * m.export[t] for t in m.T)
             generation_cost = sum(
                 m.marginal_cost[d, t] * m.dispatch[d, t] for d in m.D for t in m.T
             )
             unmet_cost = self.config.value_of_lost_load * sum(m.unmet[t] for t in m.T)
             cycle_cost = self.config.storage_cycle_cost * sum(
-                m.charge[s, t] * m.is_charging[s, t] + m.discharge[s, t] * m.is_discharging[s, t]
-                for s in m.S
-                for t in m.T
+                m.charge[s, t] + m.discharge[s, t] for s in m.S for t in m.T
             )
             return dt_h * (revenue - generation_cost - unmet_cost - cycle_cost)
 
@@ -707,12 +737,9 @@ class LPArbitrageControl(SystemLevelControlBase):
 
         TODO: Generalize the must-run treatment of flexible technologies. Their
         measured output is copied into the ``must_run`` parameter and their
-        set-points are pinned to rated production, because the wind and solar
-        performance models are resource-driven and ignore
-        ``{commodity}_command_value``. A flexible technology that does respond
-        to its set-point should become a decision variable bounded by available
-        resource so the optimizer curtails it explicitly instead of routing the
-        surplus through the ``curtail`` slack.
+        set-points are pinned to rated production. A flexible technology could
+        instead become a decision variable bounded by its uncurtailed resource
+        output so the optimizer can curtail it directly.
 
         TODO: Revisit the result cache if any technology becomes truly
         set-point-responsive. The cache assumes the schedule is a pure function
@@ -766,6 +793,8 @@ class LPArbitrageControl(SystemLevelControlBase):
         marginal_costs = dict(
             zip(self.dispatchable_techs, self._compute_marginal_costs(inputs), strict=True)
         )
+        for tech_name in self.lp_grid_import_techs:
+            marginal_costs[tech_name] = sell_price
 
         # Initialize every controlled set-point so techs excluded from the LP
         # (for example dispatchables on another commodity) hold a defined value.

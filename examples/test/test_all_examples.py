@@ -14,6 +14,38 @@ from h2integrate import ROOT_DIR, H2IntegrateModel, load_yaml, load_plant_yaml
 ROOT = Path(__file__).parents[1]
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "example_folder,resource_example_folder", [("35_system_level_control/lp_arbitrage", None)]
+)
+def test_lp_arbitrage_example_wiring(subtests, temp_copy_of_example):
+    """The existing wind and solar and the solar addition feed their intended buses."""
+    model = H2IntegrateModel(temp_copy_of_example / "solar_battery_arbitrage.yaml")
+    model.setup()
+    model.prob.final_setup()
+    om_model = model.prob.model
+
+    with subtests.test("Existing plant feeds its load"):
+        cable = "plant.electricity_existing_combiner_to_existing_load_demand_cable"
+        assert om_model.get_source("existing_load_demand.electricity_in") == (
+            om_model.get_source(f"{cable}.electricity_out")
+        )
+        assert om_model.get_source(f"{cable}.electricity_in") == (
+            om_model.get_source("existing_combiner.electricity_out")
+        )
+
+    with subtests.test("New solar feeds the charge bus"):
+        cable = "plant.electricity_added_solar_to_charge_combiner_cable"
+        assert om_model.get_source("charge_combiner.electricity_in2") == (
+            om_model.get_source(f"{cable}.electricity_out")
+        )
+        assert om_model.get_source(f"{cable}.electricity_in") == (
+            om_model.get_source("added_solar.electricity_out")
+        )
+
+    model.prob.cleanup()
+
+
 # docs fencepost start: DO NOT REMOVE
 @pytest.mark.integration
 @pytest.mark.parametrize("example_folder,resource_example_folder", [("01_onshore_steel_mn", None)])

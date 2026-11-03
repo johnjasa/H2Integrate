@@ -38,7 +38,26 @@ Helper functions for cost-aware controllers.
 
 `_add_price_input(tech_name, side)` adds a per-timestep `{tech_name}_{side}_price` input, where `side` is `"buy"` or `"sell"`. `H2IntegrateModel` connects it to the technology's `{commodity}_{side}_price`, where `commodity` is the controlled commodity. A buy price may also come from a feedstock `price`. The technology can expose the price as an input (for example a configured grid price) or as an output (for example a price computed by a custom model), and it can be scalar, per-timestep, or per-year. Scalar and per-year prices are held at their first value across the simulation. If the technology has no such variable, a warning is raised and the controller uses the price from the technology config, or zero.
 
-`LPArbitrageControl` reads its sell price this way from the technology named by `export_component`. Each dispatchable technology with `cost_per_tech: buy_price` provides a buy price.
+`LPArbitrageControl` reads its sell price this way from the technology named by
+`export_component`. It uses that sell price to dispatch grid imports, even when
+their financial buy price differs. The grid cost model still uses the actual buy
+price to calculate costs. Other dispatchable technologies use their configured
+`cost_per_tech` marginal costs.
+
+The controller detects grid imports using `GridPerformanceModel`. For custom grid
+performance models, set `grid_import_techs` to the complete list of controlled
+grid import technology names. Grid imports may supply demand or charge storage,
+but cannot be sold back or curtailed in the same timestep. Local production may
+still be sold while the grid charges storage. The battery charge/discharge mode
+is a binary decision, so the configured solver must support mixed-integer linear
+programs. The controller assumes all supply, storage and demand share one bus;
+the plant's physical connections must support the scheduled flows.
+
+`examples/35_system_level_control/lp_arbitrage_24h/` provides a short,
+reproducible 24-hour controller-window demonstration, including an explicitly
+constrained tied optimum where solar export coincides with grid charging. It
+solves the controller's window model, rather than running a full plant
+simulation. The neighboring `lp_arbitrage` example runs the full-year plant.
 
 ## Base Class and Methods
 

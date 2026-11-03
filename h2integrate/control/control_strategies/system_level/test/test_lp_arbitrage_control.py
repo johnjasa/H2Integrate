@@ -20,7 +20,9 @@ def _make_controller(example_folder):
     model = H2IntegrateModel(example_folder / "solar_battery_arbitrage.yaml")
     model.setup()
     model.prob.final_setup()
-    return model.prob.model.plant.system_level_controller
+    controller = model.prob.model.plant.system_level_controller
+    model.prob.cleanup()
+    return controller
 
 
 def _fill_window(
@@ -38,6 +40,9 @@ def _fill_window(
     sell_price = np.broadcast_to(np.asarray(sell_price, dtype=float), (controller.window_len,))
     must_run = np.broadcast_to(np.asarray(must_run, dtype=float), (controller.window_len,))
     demand = np.broadcast_to(np.asarray(demand, dtype=float), (controller.window_len,))
+    marginal_cost = np.broadcast_to(
+        np.asarray(marginal_cost, dtype=float), (controller.window_len,)
+    )
     if export_limit is None:
         export_limit = controller.export_limit
     export_limit = np.broadcast_to(np.asarray(export_limit, dtype=float), (controller.window_len,))
@@ -48,7 +53,7 @@ def _fill_window(
         lp.sell_price[t] = float(sell_price[t])
         lp.export_limit[t] = float(export_limit[t])
         for d in lp.D:
-            lp.marginal_cost[d, t] = marginal_cost
+            lp.marginal_cost[d, t] = float(marginal_cost[t])
     for d in lp.D:
         lp.rated[d] = rated
     for s in lp.S:
@@ -80,7 +85,8 @@ def test_lp_arbitrage_setup(subtests, temp_copy_of_example):
     with subtests.test("Technology classification"):
         assert controller.lp_storage_techs == ["battery"]
         assert controller.lp_dispatchable_techs == ["grid_buy"]
-        assert controller.lp_must_run_techs == []
+        assert controller.lp_grid_import_techs == ["grid_buy"]
+        assert controller.lp_must_run_techs == ["added_solar"]
 
     with subtests.test("Sell price input is added"):
         assert "grid_sell_sell_price" in controller._var_rel_names["input"]
@@ -96,7 +102,11 @@ def test_lp_arbitrage_setup(subtests, temp_copy_of_example):
 
 
 CUSTOM_GRID_MODELS = """
-from h2integrate.converters.grid.grid import GridCostModel
+from h2integrate.converters.grid.grid import GridCostModel, GridPerformanceModel
+
+
+class CustomGridPerformanceModel(GridPerformanceModel):
+    pass
 
 
 class GridSellPriceOutput(GridCostModel):
@@ -216,7 +226,7 @@ def test_lp_arbitrage_buys_low_sells_high(subtests, temp_copy_of_example):
     window_len = controller.window_len
     half = window_len // 2
     price = np.concatenate([np.full(half, 0.01), np.full(window_len - half, 0.10)])
-    _fill_window(lp, controller, sell_price=price)
+    _fill_window(lp, controller, sell_price=price, marginal_cost=price)
 
     controller._solve_window(lp, 0)
 
@@ -244,6 +254,170 @@ def test_lp_arbitrage_buys_low_sells_high(subtests, temp_copy_of_example):
         params = controller.storage_params["battery"]
         assert soc.min() >= params["min_soc_fraction"] * params["capacity"] - 1e-6
         assert soc.max() <= params["max_soc_fraction"] * params["capacity"] + 1e-6
+
+
+@requires_glpk
+@pytest.mark.unit
+@pytest.mark.parametrize("example_folder,resource_example_folder", [(EXAMPLE, None)])
+def test_lp_arbitrage_does_not_resell_grid_imports(subtests, temp_copy_of_example):
+    """A buy/sell price spread must not create instantaneous grid arbitrage."""
+    controller = _make_controller(temp_copy_of_example)
+    lp = controller._build_lp_model()
+    _fill_window(lp, controller, sell_price=0.10, marginal_cost=0.01)
+
+    controller._solve_window(lp, 0)
+
+    imported = _series(lp.dispatch, "grid_buy", controller.window_len)
+    exported = np.array([pyo.value(lp.export[t]) for t in lp.T])
+    charge = _series(lp.charge, "battery", controller.window_len)
+    discharge = _series(lp.discharge, "battery", controller.window_len)
+    with subtests.test("Imports go to storage, not directly to exports"):
+        assert np.all(imported <= charge + 1e-6)
+        assert np.all(exported <= discharge + 1e-6)
+    with subtests.test("Storage cannot manufacture export while charging"):
+        assert np.all((charge < 1e-6) | (discharge < 1e-6))
+
+
+@requires_glpk
+@pytest.mark.unit
+@pytest.mark.parametrize("example_folder,resource_example_folder", [(EXAMPLE, None)])
+def test_lp_arbitrage_solar_export_during_grid_charge(subtests, temp_copy_of_example):
+    """A local source can export while grid imports charge the battery."""
+    controller = _make_controller(temp_copy_of_example)
+    lp = controller._build_lp_model()
+    half = controller.window_len // 2
+    prices = np.r_[np.full(half, 0.05), np.full(controller.window_len - half, 0.20)]
+    solar = np.r_[np.full(half, 20_000.0), np.zeros(controller.window_len - half)]
+    _fill_window(lp, controller, sell_price=prices, must_run=solar, marginal_cost=0.01)
+
+    controller._solve_window(lp, 0)
+
+    imported = _series(lp.dispatch, "grid_buy", controller.window_len)
+    charge = _series(lp.charge, "battery", controller.window_len)
+    exported = np.array([pyo.value(lp.export[t]) for t in lp.T])
+    with subtests.test("Solar exports while grid imports charge storage"):
+        importing = imported > 1e-6
+        assert np.any(importing[:half] & (exported[:half] > 1e-6))
+        assert np.all(exported[importing] <= solar[importing] + 1e-6)
+        assert np.all(imported <= charge + 1e-6)
+
+
+@requires_glpk
+@pytest.mark.unit
+@pytest.mark.parametrize("example_folder,resource_example_folder", [(EXAMPLE, None)])
+def test_lp_arbitrage_grid_dispatch_uses_sell_price(subtests, temp_copy_of_example):
+    """The actual buy price does not alter dispatch, including on cached solves."""
+    controller = _make_controller(temp_copy_of_example)
+    controller.n_timesteps = controller.window_len = controller.commit_len = 4
+    price = np.array([0.01, 0.01, 0.20, 0.20])
+    inputs = {
+        controller.demand_input_name: np.zeros(4),
+        "grid_sell_sell_price": price,
+        "grid_buy_buy_price": np.full(4, 1.0),
+        "added_solar_electricity_out": np.zeros(4),
+        "added_solar_rated_electricity_production": np.array([50_000.0]),
+        "existing_load_demand_surplus": np.zeros(4),
+        "existing_load_demand_unmet_demand": np.full(4, 100_000.0),
+        "grid_buy_rated_electricity_production": np.array([50_000.0]),
+        "battery_storage_capacity": np.array([200_000.0]),
+        "battery_max_charge_rate": np.array([50_000.0]),
+    }
+    outputs = {name: np.zeros(4) for name in controller._var_rel_names["output"]}
+    controller.compute(inputs, outputs)
+    first_schedule = outputs["grid_buy_electricity_set_point"].copy()
+
+    with subtests.test("Grid imports use the sell price"):
+        assert first_schedule.sum() > 0.0
+        marginal_cost = [
+            pyo.value(controller._lp_model.marginal_cost["grid_buy", t]) for t in range(4)
+        ]
+        assert np.allclose(marginal_cost, price)
+
+    inputs["grid_buy_buy_price"] = np.full(4, -1.0)
+    controller.compute(inputs, outputs)
+    with subtests.test("A changed buy price leaves the dispatch unchanged"):
+        assert np.allclose(outputs["grid_buy_electricity_set_point"], first_schedule)
+
+
+@requires_glpk
+@pytest.mark.unit
+@pytest.mark.parametrize("example_folder,resource_example_folder", [(EXAMPLE, None)])
+def test_lp_arbitrage_imports_can_serve_demand(temp_copy_of_example):
+    """Grid purchases are allowed to supply demand when there is no storage charging."""
+    controller = _make_controller(temp_copy_of_example)
+    lp = controller._build_lp_model()
+    _fill_window(lp, controller, sell_price=0.10, demand=10_000.0, marginal_cost=0.01)
+    for s in lp.S:
+        lp.max_charge[s] = 0.0
+        lp.max_discharge[s] = 0.0
+
+    controller._solve_window(lp, 0)
+
+    imported = _series(lp.dispatch, "grid_buy", controller.window_len)
+    exported = np.array([pyo.value(lp.export[t]) for t in lp.T])
+    assert np.allclose(imported, 10_000.0)
+    assert np.allclose(exported, 0.0)
+
+
+@requires_glpk
+@pytest.mark.unit
+@pytest.mark.parametrize("example_folder,resource_example_folder", [(EXAMPLE, None)])
+def test_lp_arbitrage_multiple_grid_imports(temp_copy_of_example):
+    """The anti-resale constraint applies to the sum of all grid connections."""
+    controller = _make_controller(temp_copy_of_example)
+    controller.lp_dispatchable_techs.append("second_grid")
+    controller.lp_grid_import_techs.append("second_grid")
+    lp = controller._build_lp_model()
+    _fill_window(lp, controller, sell_price=0.10, marginal_cost=0.01)
+
+    controller._solve_window(lp, 0)
+
+    imported = sum(_series(lp.dispatch, grid, controller.window_len) for grid in lp.G)
+    charge = _series(lp.charge, "battery", controller.window_len)
+    assert imported.sum() > 0.0
+    assert np.all(imported <= charge + 1e-6)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("example_folder,resource_example_folder", [(EXAMPLE, None)])
+@pytest.mark.parametrize("grid_import_techs", ["[not_a_tech]", "[grid_buy, grid_buy]", "grid_buy"])
+def test_lp_arbitrage_rejects_invalid_grid_import_techs(temp_copy_of_example, grid_import_techs):
+    """Explicit grid import names must uniquely identify controlled dispatchables."""
+    config_path = temp_copy_of_example / "plant_config.yaml"
+    text = config_path.read_text()
+    config_path.write_text(
+        text.replace(
+            "    n_control_window_hours: 24\n",
+            f"    n_control_window_hours: 24\n    grid_import_techs: {grid_import_techs}\n",
+        )
+    )
+    with pytest.raises(ValueError, match="grid_import_techs"):
+        _make_controller(temp_copy_of_example)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("example_folder,resource_example_folder", [(EXAMPLE, None)])
+def test_lp_arbitrage_custom_grid_import(temp_copy_of_example):
+    """Explicit grid import names support custom performance models."""
+    (temp_copy_of_example / "custom_grid.py").write_text(CUSTOM_GRID_MODELS)
+    tech_path = temp_copy_of_example / "tech_config.yaml"
+    tech_path.write_text(
+        tech_path.read_text().replace(
+            "  grid_buy:\n    performance_model:\n      model: GridPerformanceModel\n",
+            "  grid_buy:\n    performance_model:\n"
+            "      model: CustomGridPerformanceModel\n      model_location: custom_grid.py\n",
+        )
+    )
+    plant_path = temp_copy_of_example / "plant_config.yaml"
+    plant_path.write_text(
+        plant_path.read_text().replace(
+            "    n_control_window_hours: 24\n",
+            "    n_control_window_hours: 24\n    grid_import_techs: [grid_buy]\n",
+        )
+    )
+
+    controller = _make_controller(temp_copy_of_example)
+    assert controller.lp_grid_import_techs == ["grid_buy"]
 
 
 @requires_glpk
@@ -355,6 +529,8 @@ def test_lp_arbitrage_headroom_components(subtests, temp_copy_of_example):
     with subtests.test("The uncontrolled existing plant is not dispatched"):
         assert "existing_solar" not in controller.lp_must_run_techs
         assert "existing_solar" not in controller.lp_dispatchable_techs
+        assert "existing_wind" not in controller.lp_must_run_techs
+        assert "existing_wind" not in controller.lp_dispatchable_techs
 
 
 @pytest.mark.unit
@@ -470,12 +646,18 @@ def test_lp_arbitrage_storage_sizing_from_inputs(subtests, temp_copy_of_example)
         charge = _series(lp.charge, "battery", controller.window_len)
         assert charge.max() == pytest.approx(10_000.0)
 
+    with subtests.test("The storage mode constraints honor a later rate change"):
+        lp.max_charge["battery"] = 3_000.0
+        controller._solve_window(lp, 0)
+        charge = _series(lp.charge, "battery", controller.window_len)
+        assert charge.max() == pytest.approx(3_000.0)
+
 
 @requires_glpk
 @pytest.mark.integration
 @pytest.mark.parametrize("example_folder,resource_example_folder", [(EXAMPLE, None)])
 def test_lp_arbitrage_example(subtests, temp_copy_of_example):
-    """The full example dispatches a schedule the storage model can follow exactly."""
+    """The full example follows the optimized schedule within solver tolerance."""
     model = H2IntegrateModel(temp_copy_of_example / "solar_battery_arbitrage.yaml")
     model.setup()
 
@@ -483,7 +665,7 @@ def test_lp_arbitrage_example(subtests, temp_copy_of_example):
     hour_of_day = np.arange(8760) % 24
     price = 0.03 + 0.025 * np.sin((hour_of_day - 9) * np.pi / 12)
     model.prob.set_val("grid_sell.electricity_sell_price", price, units="USD/(kW*h)")
-    model.prob.set_val("grid_buy.electricity_buy_price", price + 0.004, units="USD/(kW*h)")
+    model.prob.set_val("grid_buy.electricity_buy_price", price - 0.020, units="USD/(kW*h)")
 
     # A single evaluation, not the example's battery sizing sweep. This
     # test is about whether the dispatch the controller plans is realizable.
@@ -499,12 +681,17 @@ def test_lp_arbitrage_example(subtests, temp_copy_of_example):
     exported = get("grid_sell.electricity_sold", units="kW")
     curtailed = get("grid_sell.electricity_excess", units="kW")
     spill = get("existing_load_demand.unused_electricity_out", units="kW")
+    added_solar = get("added_solar.electricity_out", units="kW")
+    existing_solar = get("existing_solar.electricity_out", units="kW")
+    existing_wind = get("existing_wind.electricity_out", units="kW")
+    existing_combined = get("existing_combiner.electricity_out", units="kW")
     headroom = get("existing_load_demand.unmet_electricity_demand_out", units="kW")
     unmet = get("electrical_load_demand.unmet_electricity_demand_out", units="kW")
 
-    with subtests.test("Storage follows the commanded schedule exactly"):
+    with subtests.test("Storage follows the commanded schedule"):
         # Nothing is clipped by the storage model's charge-availability limit.
-        assert np.allclose(commanded, actual, rtol=1e-6, atol=1e-6)
+        max_error = np.max(np.abs(commanded - actual))
+        assert max_error <= 0.01, f"Maximum storage dispatch error: {max_error} kW"
 
     with subtests.test("State of charge stays within its bounds"):
         assert soc.min() >= 10.0 - 1e-6
@@ -515,15 +702,32 @@ def test_lp_arbitrage_example(subtests, temp_copy_of_example):
 
     with subtests.test("Export never exceeds the existing plant's unmet demand"):
         # The controller plans against this ceiling and the grid model enforces it.
-        assert exported.max() <= headroom.max() + 1e-6
-        assert np.all(exported <= np.minimum(100_000.0, headroom) + 1e-6)
+        max_headroom_excess = np.max(exported - np.minimum(100_000.0, headroom))
+        assert max_headroom_excess <= 0.01, (
+            f"Maximum export headroom excess: {max_headroom_excess} kW"
+        )
 
     with subtests.test("No unmet demand"):
         assert unmet.sum() == pytest.approx(0.0, abs=1e-6)
 
     with subtests.test("Commodity balance closes"):
-        supply = imported + spill + discharge - charge
+        supply = imported + spill + added_solar + discharge - charge
         assert np.allclose(supply, exported + curtailed, rtol=1e-6, atol=1e-6)
+
+    with subtests.test("Existing wind and solar feed the existing load"):
+        assert existing_wind.sum() > 0.0
+        assert existing_solar.sum() > 0.0
+        assert np.allclose(existing_combined, existing_solar + existing_wind)
+
+    with subtests.test("The solar addition produces electricity"):
+        assert added_solar.sum() > 0.0
+
+    with subtests.test("Grid imports charge storage rather than being resold"):
+        max_import_excess = np.max(imported - charge)
+        max_export_excess = np.max(exported - added_solar - spill - discharge)
+        assert max_import_excess <= 0.01, f"Maximum import excess: {max_import_excess} kW"
+        assert max_export_excess <= 0.01, f"Maximum export excess: {max_export_excess} kW"
+        assert np.all((charge < 1e-6) | (discharge < 1e-6))
 
     with subtests.test("Round-trip efficiency is applied"):
         # Not exactly the round-trip efficiency because the battery does not end

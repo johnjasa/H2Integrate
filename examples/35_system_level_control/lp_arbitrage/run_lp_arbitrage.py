@@ -1,17 +1,16 @@
-"""Sweep the size of a merchant battery added to an existing solar plant.
+"""Sweep the size of a battery and solar addition to an existing wind and solar plant.
 
 A synthetic hourly locational marginal price (LMP) series drives both the
 export price and the import price. The system-level controller solves a rolling
-24-hour linear program that decides, simultaneously, when to charge the battery
-(from the existing plant's spill or from the grid), when to discharge, and how
-much to export. Export is capped at the existing plant's unmet demand, so only
-the value of the addition is counted.
+24-hour mixed-integer linear program that decides when to charge the battery
+from the added solar, existing plant's spill, or grid, when to discharge, and
+how much to export. Export is capped at the existing plant's unmet demand, so
+only the value of the addition is counted. Grid energy cannot be resold in the
+same timestep, but added solar may be exported while the grid charges storage.
 
-The battery is the only new asset. Its power rating is fixed by
-``tech_config.yaml`` and the sweep varies its energy capacity, so each case asks
-how many hours of storage are worth building behind a given inverter. The driver
-evaluates a full year of dispatch at each capacity and records the resulting net
-present value.
+The added solar and battery power ratings are fixed by ``tech_config.yaml`` and
+the sweep varies battery energy capacity. The driver evaluates a full year of
+dispatch at each capacity and records the net present value of both new assets.
 
 Export revenue reaches the net present value through the grid cost model, which
 values every exported kilowatt-hour at that hour's LMP and reports the total as
@@ -22,7 +21,7 @@ same energy from being paid for twice.
 The run writes three figures: the value curve over the swept capacities, and
 then the dispatch and the economics of whichever capacity came out best.
 
-Each case is a year of hourly linear programs, so the whole sweep takes a while.
+Each case is a year of hourly mixed-integer programs, so the sweep takes a while.
 """
 
 from pathlib import Path
@@ -76,17 +75,17 @@ def make_lmp_profile(n_timesteps=8760, seed=0):
 n_timesteps = 8760
 dt_h = 1.0
 lmp = make_lmp_profile(n_timesteps)
+buy_price = lmp + 0.004
 
 h2i = H2IntegrateModel("solar_battery_arbitrage.yaml")
 h2i.setup()
 
 # -- Apply the LMP series to both grid connections --
 # The export price feeds the controller (input-to-input) and the revenue term of
-# the grid cost model. The import price feeds the controller's marginal cost for
-# grid_buy and the purchase term of the cost model. A small adder on the import
-# side represents transmission and ancillary charges.
+# the grid cost model. Grid dispatch also uses the sell price; the separate buy
+# price is used for purchase costs and includes transmission and ancillary charges.
 h2i.prob.set_val("grid_sell.electricity_sell_price", lmp, units="USD/(kW*h)")
-h2i.prob.set_val("grid_buy.electricity_buy_price", lmp + 0.004, units="USD/(kW*h)")
+h2i.prob.set_val("grid_buy.electricity_buy_price", buy_price, units="USD/(kW*h)")
 
 h2i.run()
 
@@ -116,16 +115,22 @@ sweep_sold = sweep_output("grid_sell.electricity_sold")
 sweep_bought = sweep_output("grid_buy.electricity_out")
 
 sweep_revenue = (sweep_sold * lmp).sum(axis=1) * dt_h
-sweep_margin = sweep_revenue - (sweep_bought * (lmp + 0.004)).sum(axis=1) * dt_h
+sweep_margin = sweep_revenue - (sweep_bought * buy_price).sum(axis=1) * dt_h
 
 print("\nBattery sizing sweep")
-header = ("Capacity (MWh)", "Duration (h)", "CapEx (MUSD)", "Margin (MUSD/yr)", "NPV (MUSD)")
-print("".join(f"{col:>18}" for col in header))
+header = (
+    "Capacity (MWh)",
+    "Duration (h)",
+    "Battery CapEx (MUSD)",
+    "Margin (MUSD/yr)",
+    "NPV (MUSD)",
+)
+print("".join(f"{col:>22}" for col in header))
 for i, capacity in enumerate(sweep_capacity):
     marker = "  <- best" if capacity == best_capacity else ""
     print(
-        f"{capacity / 1e3:>18,.1f}{sweep_duration[i]:>18,.1f}{sweep_capex[i] / 1e6:>18,.1f}"
-        f"{sweep_margin[i] / 1e6:>18,.2f}{sweep_npv[i] / 1e6:>18,.2f}{marker}"
+        f"{capacity / 1e3:>22,.1f}{sweep_duration[i]:>22,.1f}{sweep_capex[i] / 1e6:>22,.1f}"
+        f"{sweep_margin[i] / 1e6:>22,.2f}{sweep_npv[i] / 1e6:>22,.2f}{marker}"
     )
 
 # -- Plot the value curve --
@@ -153,6 +158,7 @@ battery_charge = -h2i.prob.get_val("plant.battery.storage_electricity_charge", u
 battery_soc = h2i.prob.get_val("plant.battery.SOC", units="percent")
 grid_import = h2i.prob.get_val("plant.grid_buy.electricity_out", units="kW")
 grid_export = h2i.prob.get_val("plant.grid_sell.electricity_sold", units="kW")
+added_solar = h2i.prob.get_val("plant.added_solar.electricity_out", units="kW")
 # The existing plant's shortfall is the export ceiling; its spill is chargeable supply.
 export_ceiling = h2i.prob.get_val(
     "plant.existing_load_demand.unmet_electricity_demand_out", units="kW"
@@ -166,7 +172,7 @@ battery_capex = h2i.prob.get_val("plant.battery.CapEx", units="USD").item()
 utilization = h2i.prob.get_val("plant.battery.standard_capacity_factor")[0]
 
 export_revenue = float(np.sum(grid_export * lmp) * dt_h)
-import_cost = float(np.sum(grid_import * (lmp + 0.004)) * dt_h)
+import_cost = float(np.sum(grid_import * buy_price) * dt_h)
 
 # Volume-weighted price the schedule captured, versus the flat market average.
 realized_price = export_revenue / max(grid_export.sum() * dt_h, 1.0)
@@ -223,9 +229,18 @@ axes[1].bar(
 )
 axes[1].bar(
     hours,
-    grid_import[window] / 1e3,
+    added_solar[window] / 1e3,
     width=1.0,
     bottom=existing_spill[window] / 1e3,
+    color="tab:yellow",
+    align="edge",
+    label="Added solar",
+)
+axes[1].bar(
+    hours,
+    grid_import[window] / 1e3,
+    width=1.0,
+    bottom=(existing_spill[window] + added_solar[window]) / 1e3,
     color="tab:gray",
     align="edge",
     label="Grid import",
@@ -323,7 +338,7 @@ print("Plot saved to lp_arbitrage_results.png")
 
 # -- Plot the plant economics over the year --
 hourly_revenue = grid_export * lmp * dt_h
-hourly_cost = grid_import * (lmp + 0.004) * dt_h
+hourly_cost = grid_import * buy_price * dt_h
 hourly_margin = hourly_revenue - hourly_cost
 
 fig2, ax2 = plt.subplots(2, 2, figsize=(15, 10))

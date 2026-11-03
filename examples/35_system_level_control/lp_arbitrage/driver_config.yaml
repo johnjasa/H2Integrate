@@ -1,7 +1,7 @@
 name: driver_config
 description: >-
-  Sweep the energy capacity of a merchant battery added to an existing solar
-  plant and record the net present value of each capacity.
+  Sweep the battery capacity of a solar and storage addition to an existing
+  wind and solar plant and record the net present value of each capacity.
 general:
   folder_output: outputs
   create_om_reports: false
