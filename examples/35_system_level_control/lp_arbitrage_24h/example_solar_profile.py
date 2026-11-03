@@ -44,7 +44,7 @@ class ExampleSolarProfilePerformanceModel(PerformanceModelBaseClass):
             )
         self.profile = np.tile(profile, self.n_timesteps // profile.size)
 
-    def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
+    def compute(self, inputs, outputs):
         outputs["electricity_out"] = self.profile
         self.apply_curtailment(outputs)
         total = np.sum(outputs["electricity_out"]) * self.dt / 3600
