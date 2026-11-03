@@ -766,8 +766,8 @@ class LPArbitrageControl(SystemLevelControlBase):
             must_run += np.asarray(inputs[f"{tech_name}_{commodity}_out"], dtype=float)
 
         # Spilled production from an existing plant behaves like must-run supply.
-        # It cannot be resold, because the export ceiling below is zero in exactly
-        # the timesteps where spillage is nonzero, so it is stored or curtailed.
+        # If the same component also sets the export ceiling, its spill cannot
+        # be resold because unmet demand is zero when spillage is nonzero.
         if self.surplus_source_component is not None:
             must_run += np.asarray(inputs[f"{self.surplus_source_component}_surplus"], dtype=float)
 

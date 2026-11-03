@@ -58,6 +58,9 @@ reproducible 24-hour controller-window demonstration, including an explicitly
 constrained tied optimum where solar export coincides with grid charging. It
 solves the controller's window model, rather than running a full plant
 simulation. The neighboring `lp_arbitrage` example runs the full-year plant.
+That example can export recovered spill from the existing plant up to the grid
+interconnection limit; its financial results include that spill revenue but
+exclude the existing plant's costs.
 
 ## Base Class and Methods
 

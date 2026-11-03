@@ -1,11 +1,9 @@
 name: plant_config
 description: >
-  Solar and a battery added to an existing wind and solar plant serving a flat load. The
-  LP values only the addition: it may sell no more than the existing plant
-  leaves unserved, and it may absorb the existing plant's spill. The addition
-  has no on-site load of its own, so its demand component is set to zero and all
-  of its production flows through ``unused_electricity_out`` to the export grid
-  connection.
+  Solar and a battery added to an existing wind and solar plant serving a flat load.
+  The addition can use or sell the existing plant's spill, subject to the grid
+  interconnection limit. It has no on-site load of its own, so its production
+  flows through ``unused_electricity_out`` to the export grid connection.
 sites:
   site:
     latitude: 30.6617
@@ -42,7 +40,7 @@ technology_interconnections:
   # cancels the charging draw taken from the source bus.
   - [battery, out_combiner, electricity, cable]
   - [out_combiner, electrical_load_demand, electricity, cable]
-  # Export path: everything the (zero) load does not consume is sold.
+  # Export path: power not consumed by the zero load reaches the export grid.
   - [electrical_load_demand, grid_sell, [unused_electricity_out, electricity_set_point]]
   - [electrical_load_demand, grid_sell, [unused_electricity_out, electricity_in]]
 site_to_tech_connections:
@@ -63,9 +61,7 @@ system_level_control:
     n_control_window_hours: 24
     cost_per_tech:
       grid_buy: buy_price  # accounting uses the buy price; dispatch uses the sell price
-    # Value only the addition: sell no more than the existing plant leaves
-    # unserved, and absorb what it spills.
-    export_limit_component: existing_load_demand
+    # Make the existing plant's spill available for storage or export.
     surplus_source_component: existing_load_demand
     storage_cycle_cost: 0.001  # $/kWh throughput; breaks ties between schedules
     value_of_lost_load: 10.0
@@ -109,9 +105,7 @@ finance_parameters:
   finance_subgroups:
     electricity:
       commodity: electricity
-      # Value what is actually sold, not what reaches the delivery bus. The
-      # export ceiling curtails a large share of the throughput at out_combiner,
-      # so using that stream would book revenue on energy that is never sold.
+      # Value what is actually sold, not power curtailed at the interconnection.
       commodity_stream: grid_sell
       use_commodity_stream_timeseries: true
       commodity_stream_output: electricity_sold

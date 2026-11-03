@@ -43,6 +43,14 @@ def test_lp_arbitrage_example_wiring(subtests, temp_copy_of_example):
             om_model.get_source("added_solar.electricity_out")
         )
 
+    with subtests.test("Grid export is not capped by the existing plant's unmet demand"):
+        assert om_model.get_source("grid_sell.export_limit_profile") != om_model.get_source(
+            "existing_load_demand.unmet_electricity_demand_out"
+        )
+        assert np.allclose(
+            model.prob.get_val("grid_sell.export_limit_profile", units="kW"), 100_000
+        )
+
     model.prob.cleanup()
 
 

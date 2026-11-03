@@ -4,13 +4,15 @@ A synthetic hourly locational marginal price (LMP) series drives both the
 export price and the import price. The system-level controller solves a rolling
 24-hour mixed-integer linear program that decides when to charge the battery
 from the added solar, existing plant's spill, or grid, when to discharge, and
-how much to export. Export is capped at the existing plant's unmet demand, so
-only the value of the addition is counted. Grid energy cannot be resold in the
-same timestep, but added solar may be exported while the grid charges storage.
+how much to export. Local production and recovered spill may be sold up to the
+grid interconnection limit. Grid energy cannot be resold in the same timestep,
+but added solar may be exported while the grid charges storage.
 
 The added solar and battery power ratings are fixed by ``tech_config.yaml`` and
 the sweep varies battery energy capacity. The driver evaluates a full year of
-dispatch at each capacity and records the net present value of both new assets.
+dispatch at each capacity and records net present value. This includes revenue
+from recovered spill but excludes the existing plant's capital and operating
+costs, so it is not the value of the new assets alone.
 
 Export revenue reaches the net present value through the grid cost model, which
 values every exported kilowatt-hour at that hour's LMP and reports the total as
@@ -139,7 +141,7 @@ ax0.plot(sweep_capacity / 1e3, sweep_npv / 1e6, "o-", color="tab:blue")
 ax0.axhline(0.0, color="k", linewidth=0.8, linestyle=":")
 ax0.set_xlabel("Battery energy capacity (MWh), at a fixed power rating")
 ax0.set_ylabel("NPV (MUSD)")
-ax0.set_title("Value of the addition against battery capacity")
+ax0.set_title("NPV including recovered spill against battery capacity")
 ax0.grid(alpha=0.3)
 plt.tight_layout()
 plt.savefig("lp_arbitrage_sizing.png", dpi=150)
@@ -159,11 +161,12 @@ battery_soc = h2i.prob.get_val("plant.battery.SOC", units="percent")
 grid_import = h2i.prob.get_val("plant.grid_buy.electricity_out", units="kW")
 grid_export = h2i.prob.get_val("plant.grid_sell.electricity_sold", units="kW")
 added_solar = h2i.prob.get_val("plant.added_solar.electricity_out", units="kW")
-# The existing plant's shortfall is the export ceiling; its spill is chargeable supply.
-export_ceiling = h2i.prob.get_val(
+# The existing plant's shortfall is context only; its spill can be stored or sold.
+existing_unmet = h2i.prob.get_val(
     "plant.existing_load_demand.unmet_electricity_demand_out", units="kW"
 )
 existing_spill = h2i.prob.get_val("plant.existing_load_demand.unused_electricity_out", units="kW")
+grid_excess = h2i.prob.get_val("plant.grid_sell.electricity_excess", units="kW")
 interconnection_limit = h2i.prob.get_val("plant.grid_sell.interconnection_size", units="kW").item()
 
 charge_rate = h2i.prob.get_val("plant.battery.max_charge_rate", units="kW").item()
@@ -280,22 +283,14 @@ axes[3].bar(
     align="edge",
     label="Export",
 )
-axes[3].step(
+axes[3].bar(
     hours,
-    export_ceiling[window] / 1e3,
-    where="post",
-    color="tab:red",
-    linewidth=1.6,
-    label="Export ceiling (existing plant's unmet demand)",
-)
-axes[3].fill_between(
-    hours,
-    export_ceiling[window] / 1e3,
-    interconnection_limit / 1e3,
-    step="post",
-    color="tab:red",
-    alpha=0.08,
-    label="Blocked by the ceiling",
+    grid_excess[window] / 1e3,
+    width=1.0,
+    bottom=grid_export[window] / 1e3,
+    color="tab:orange",
+    align="edge",
+    label="Not sold at the interconnection",
 )
 axes[3].axhline(
     interconnection_limit / 1e3,
@@ -307,16 +302,16 @@ axes[3].axhline(
 axes[3].set_ylabel("Export (MW)")
 axes[3].legend(loc="upper right", fontsize=8)
 
-# The existing plant alternates between spilling and falling short, and those two
-# signals are what the addition is allowed to charge from and sell into.
+# The existing plant's spill is available to the addition; its shortfall no
+# longer limits exports and is shown for context.
 axes[4].bar(
     hours,
-    export_ceiling[window] / 1e3,
+    existing_unmet[window] / 1e3,
     width=1.0,
     color="tab:red",
     alpha=0.6,
     align="edge",
-    label="Unmet demand (sellable headroom)",
+    label="Existing load unmet demand",
 )
 axes[4].bar(
     hours,
@@ -325,7 +320,7 @@ axes[4].bar(
     color="tab:orange",
     alpha=0.8,
     align="edge",
-    label="Spill (chargeable surplus)",
+    label="Spill (available surplus)",
 )
 axes[4].axhline(0.0, color="k", linewidth=0.8)
 axes[4].set_ylabel("Existing plant (MW)")

@@ -317,7 +317,6 @@ def test_lp_arbitrage_grid_dispatch_uses_sell_price(subtests, temp_copy_of_examp
         "added_solar_electricity_out": np.zeros(4),
         "added_solar_rated_electricity_production": np.array([50_000.0]),
         "existing_load_demand_surplus": np.zeros(4),
-        "existing_load_demand_unmet_demand": np.full(4, 100_000.0),
         "grid_buy_rated_electricity_production": np.array([50_000.0]),
         "battery_storage_capacity": np.array([200_000.0]),
         "battery_max_charge_rate": np.array([50_000.0]),
@@ -518,12 +517,10 @@ def test_lp_arbitrage_headroom_components(subtests, temp_copy_of_example):
     """Headroom keys add controller inputs and resolve to the named component."""
     controller = _make_controller(temp_copy_of_example)
 
-    with subtests.test("Headroom inputs are added"):
-        assert "existing_load_demand_unmet_demand" in controller._var_rel_names["input"]
+    with subtests.test("The example uses spill but has no unmet-demand export ceiling"):
+        assert "existing_load_demand_unmet_demand" not in controller._var_rel_names["input"]
         assert "existing_load_demand_surplus" in controller._var_rel_names["input"]
-
-    with subtests.test("Components are recorded on the controller"):
-        assert controller.export_limit_component == "existing_load_demand"
+        assert controller.export_limit_component is None
         assert controller.surplus_source_component == "existing_load_demand"
 
     with subtests.test("The uncontrolled existing plant is not dispatched"):
@@ -531,6 +528,47 @@ def test_lp_arbitrage_headroom_components(subtests, temp_copy_of_example):
         assert "existing_solar" not in controller.lp_dispatchable_techs
         assert "existing_wind" not in controller.lp_must_run_techs
         assert "existing_wind" not in controller.lp_dispatchable_techs
+
+    config_path = temp_copy_of_example / "plant_config.yaml"
+    text = config_path.read_text()
+    config_path.write_text(
+        text.replace(
+            "    surplus_source_component: existing_load_demand\n",
+            "    export_limit_component: existing_load_demand\n"
+            "    surplus_source_component: existing_load_demand\n",
+        )
+    )
+    controller = _make_controller(temp_copy_of_example)
+    with subtests.test("An explicitly configured unmet-demand ceiling is still supported"):
+        assert "existing_load_demand_unmet_demand" in controller._var_rel_names["input"]
+        assert controller.export_limit_component == "existing_load_demand"
+
+
+@requires_glpk
+@pytest.mark.unit
+@pytest.mark.parametrize("example_folder,resource_example_folder", [(EXAMPLE, None)])
+def test_lp_arbitrage_example_exports_existing_spill(temp_copy_of_example):
+    """The example can sell existing spill without an unmet-demand ceiling."""
+    controller = _make_controller(temp_copy_of_example)
+    assert controller.export_limit_component is None
+    controller.n_timesteps = controller.window_len = controller.commit_len = 4
+    inputs = {
+        controller.demand_input_name: np.zeros(4),
+        "grid_sell_sell_price": np.full(4, 0.05),
+        "grid_buy_buy_price": np.full(4, 0.01),
+        "added_solar_electricity_out": np.zeros(4),
+        "added_solar_rated_electricity_production": np.array([50_000.0]),
+        "existing_load_demand_surplus": np.full(4, 20_000.0),
+        "grid_buy_rated_electricity_production": np.array([50_000.0]),
+        "battery_storage_capacity": np.array([200_000.0]),
+        "battery_max_charge_rate": np.array([0.0]),
+    }
+    outputs = {name: np.zeros(4) for name in controller._var_rel_names["output"]}
+    controller.compute(inputs, outputs)
+
+    exported = np.array([pyo.value(controller._lp_model.export[t]) for t in range(4)])
+    assert np.allclose(exported, 20_000.0, atol=1e-6)
+    assert np.allclose(outputs["grid_buy_electricity_set_point"], 0.0, atol=1e-6)
 
 
 @pytest.mark.unit
@@ -541,8 +579,9 @@ def test_lp_arbitrage_rejects_unknown_headroom_component(temp_copy_of_example):
     text = config_path.read_text()
     config_path.write_text(
         text.replace(
-            "    export_limit_component: existing_load_demand\n",
-            "    export_limit_component: not_a_tech\n",
+            "    surplus_source_component: existing_load_demand\n",
+            "    export_limit_component: not_a_tech\n"
+            "    surplus_source_component: existing_load_demand\n",
         )
     )
 
@@ -700,12 +739,8 @@ def test_lp_arbitrage_example(subtests, temp_copy_of_example):
     with subtests.test("Export respects the interconnection limit"):
         assert exported.max() <= 100_000.0 + 1e-6
 
-    with subtests.test("Export never exceeds the existing plant's unmet demand"):
-        # The controller plans against this ceiling and the grid model enforces it.
-        max_headroom_excess = np.max(exported - np.minimum(100_000.0, headroom))
-        assert max_headroom_excess <= 0.01, (
-            f"Maximum export headroom excess: {max_headroom_excess} kW"
-        )
+    with subtests.test("Existing spill can be exported despite zero unmet demand"):
+        assert np.any((spill > 1.0) & (exported > headroom + 1.0))
 
     with subtests.test("No unmet demand"):
         assert unmet.sum() == pytest.approx(0.0, abs=1e-6)
