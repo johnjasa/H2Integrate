@@ -6,6 +6,7 @@ from pytest import fixture
 from h2integrate.converters.ammonia.ammonia_synloop_performance import (
     AmmoniaSynLoopPerformanceModel,
 )
+from h2integrate.tools.constants import H_MW, N_MW
 
 
 @pytest.fixture
@@ -85,6 +86,55 @@ def make_production_sequence(min_prod, max_prod, onoff_sequence, n_timesteps, st
     ]
 
     return production
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("dt,n_timesteps", [(3600, 40)])
+@pytest.mark.parametrize("startup_enabled", [False, True])
+@pytest.mark.parametrize("limiting_commodity", ["hydrogen", "nitrogen", "electricity"])
+def test_ramp_consumption_matches_production(
+    plant_config, synloop_config, dynamics_config, n_timesteps, startup_enabled, limiting_commodity
+):
+    dynamics_config.update({
+        "turndown_ratio": 0.7,
+        "ramp_up_rate_fraction": 0.3,
+        "ramp_down_rate_fraction": 0.3,
+        "include_cold_start": startup_enabled,
+        "off_hours_cold_start": 4 if startup_enabled else None,
+        "cold_start_delay_hours": 2 if startup_enabled else None,
+        "include_warm_start": startup_enabled,
+        "off_hours_warm_start": 1 if startup_enabled else None,
+        "warm_start_delay_hours": 1 if startup_enabled else None,
+    })
+    params = synloop_config["model_inputs"]["performance_parameters"]
+    params.update(dynamics_config)
+    supply = np.resize(np.array([0.0] * 5 + [50.0] * 12 + [0.0] * 3), n_timesteps)
+    prob = om.Problem()
+    prob.model.add_subsystem(
+        "comp", AmmoniaSynLoopPerformanceModel(
+            plant_config=plant_config, tech_config=synloop_config, driver_config={}
+        )
+    )
+    prob.setup()
+    feed_weight = params["feed_gas_x_h2"] * 2 * H_MW + params["feed_gas_x_n2"] * 2 * N_MW
+    hydrogen_rate = params["feed_gas_mass_ratio"] * params["feed_gas_x_h2"] * 2 * H_MW / feed_weight
+    nitrogen_rate = params["feed_gas_mass_ratio"] * params["feed_gas_x_n2"] * 2 * N_MW / feed_weight
+    for commodity, rate, units in (("hydrogen", hydrogen_rate, "kg/h"),
+                                   ("nitrogen", nitrogen_rate, "kg/h"),
+                                   ("electricity", params["energy_demand"], "kW")):
+        available = supply * rate if commodity == limiting_commodity else np.full(n_timesteps, 5000.0)
+        prob.set_val(f"comp.{commodity}_in", available, units=units)
+    prob.run_model()
+
+    production = prob.get_val("comp.ammonia_out", units="kg/h")
+    assert np.any((production > 0) & (production < 35.0))
+    for commodity, rate, units in (("hydrogen", hydrogen_rate, "kg/h"),
+                                   ("nitrogen", nitrogen_rate, "kg/h"),
+                                   ("electricity", params["energy_demand"], "kW")):
+        consumed = prob.get_val(f"comp.{commodity}_consumed", units=units)
+        np.testing.assert_allclose(consumed, production * rate, rtol=1e-9, atol=1e-8)
+        assert np.min(prob.get_val(f"comp.{commodity}_out", units=units)) >= -1e-8
+        assert prob.get_val(f"comp.total_{commodity}_consumed")[0] == pytest.approx(consumed.sum())
 
 
 @pytest.mark.regression

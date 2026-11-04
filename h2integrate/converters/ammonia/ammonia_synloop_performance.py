@@ -297,10 +297,8 @@ class AmmoniaSynLoopPerformanceModel(ResizeablePerformanceModelBaseClass):
             tuple:
                 - nh3_production (np.ndarray): production profile after ramping and
                   start-up losses have been applied.
-                - consumption_multiplier (np.ndarray): on/off-gated production profile
-                  used to scale input-commodity consumption. Feedstocks are consumed during
-                  start-up delays (when ammonia output is zeroed) so the consumption
-                  multiplier is taken *before* start-up losses are applied.
+                                - consumption_multiplier (np.ndarray): actual production profile used
+                                    to scale feedstock and electricity consumption, including ramp hours.
         """
         rated_capacity = float(inputs["ammonia_production_capacity"][0])
 
@@ -395,11 +393,7 @@ class AmmoniaSynLoopPerformanceModel(ResizeablePerformanceModelBaseClass):
             commodity_amount_units=self.commodity_amount_units,
         )
 
-        # 5. Compute the consumption multiplier from the post-dynamic profile.
-        # in current behavior the consumption is based on the nh3 produced during
-        # that timestep. TODO: develop function to allow for varied consumption based
-        # on behavior in that time step (e.g., ramping down uses less n2 and h2 but more power)
-        consumption_multiplier = np.where(nh3_production >= minimum_production, nh3_production, 0)
+        consumption_multiplier = nh3_production.copy()
 
         return nh3_production, consumption_multiplier
 
@@ -524,9 +518,9 @@ class AmmoniaSynLoopPerformanceModel(ResizeablePerformanceModelBaseClass):
         outputs["total_ammonia_produced"] = max(nh3_prod.sum(), 1e-6) * (self.dt / 3600)
 
         # Total consumption of feedstocks
-        outputs["total_hydrogen_consumed"] = h2_in.sum() * (self.dt / 3600)
-        outputs["total_nitrogen_consumed"] = n2_in.sum() * (self.dt / 3600)
-        outputs["total_electricity_consumed"] = elec_in.sum() * (self.dt / 3600)  # kW*h
+        outputs["total_hydrogen_consumed"] = used_h2.sum() * (self.dt / 3600)
+        outputs["total_nitrogen_consumed"] = used_n2.sum() * (self.dt / 3600)
+        outputs["total_electricity_consumed"] = used_elec.sum() * (self.dt / 3600)
 
         # Feedstock consumption profiles
         outputs["electricity_consumed"] = used_elec  # kW
