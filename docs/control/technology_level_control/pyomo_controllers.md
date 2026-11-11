@@ -205,6 +205,7 @@ The controller's configuration is:
 - $\mathcal{D}$ := dispatch window: $\pm$`event_duration`/2 neighbourhoods around each peak in $\mathcal{E}$ (equals $\mathcal{E}$ when `event_duration` is not provided)
 - $\gamma$ := incentive revenue per kWh discharged (\$/kWh). Specified directly via `performance_incentive`, or derived from `performance_incentive_per_event` (\$/event) as $\gamma = \gamma_{\text{event}} / (\tau \cdot \Delta t \cdot P_{\max})$
 - $P_{\max}$ := `max_charge_rate` (kW): maximum charge and discharge rate
+- $E_{\mathrm{capacity}}$ := `storage_capacity` (kWh): total storage capacity used by the controller
 - $E_{\max} :=$ `max_capacity` $\times$ (`max_soc_fraction` $-$ `min_soc_fraction`): usable energy capacity (kWh)
 - $\eta_c$ := `charge_efficiency`, $\quad \eta_d$ := `discharge_efficiency`
 - $\text{SoC}_{\max}$ := `max_soc_fraction`, $\quad \text{SoC}_{\min}$ := `min_soc_fraction`
@@ -287,8 +288,14 @@ $$
 - SoC evolution with continuous charge and discharge power:
 
 $$
-\text{SoC}_{t} = \text{SoC}_{t-1} + \frac{\eta_c \cdot p_{c,t}\cdot \Delta t }{E_{\max}} - \frac{p^d_{up,t} \cdot \Delta t}{\eta_d \cdot E_{\max}} - \frac{p^d_{loc,t} \cdot \Delta t}{\eta_d \cdot E_{\max}} \qquad \forall\, t \in \mathcal{T},\, t > 0
+\text{SoC}_{0} = \text{SoC}_{\mathrm{initial}} + \frac{\eta_c \cdot p_{c,0}\cdot \Delta t}{E_{\mathrm{capacity}}} - \frac{p^d_{up,0} \cdot \Delta t}{\eta_d \cdot E_{\mathrm{capacity}}} - \frac{p^d_{loc,0} \cdot \Delta t}{\eta_d \cdot E_{\mathrm{capacity}}}
 $$
+
+$$
+\text{SoC}_{t} = \text{SoC}_{t-1} + \frac{\eta_c \cdot p_{c,t}\cdot \Delta t}{E_{\mathrm{capacity}}} - \frac{p^d_{up,t} \cdot \Delta t}{\eta_d \cdot E_{\mathrm{capacity}}} - \frac{p^d_{loc,t} \cdot \Delta t}{\eta_d \cdot E_{\mathrm{capacity}}} \qquad \forall\, t \in \mathcal{T},\, t > 0
+$$
+
+Here $\text{SoC}_{\mathrm{initial}}$ is the incoming state of charge at the start of the window, so charging or discharging is allowed on the first timestep.
 
 - SoC bounds:
 
@@ -355,7 +362,7 @@ Setting `exclusive_control_months` turns on a seasonal split: in listed months, 
 
 Each rolling window is solved one way or the other, but never solved simultaneously - `setup()` raises an error if `n_control_window_hours` spans both the control schemes.
 
-During Exclusive Control Months, the discharge cap switches from a monthly event count (`n_max_events`) to a monthly cycled-energy budget (`max_cycles_per_day`). This energy budget is tracked separately for each calendar month and resets at the start of each new year. `peak_window` switches roles from "eligible to discharge" to "no charging allowed" (e.g. a utility's Class A Peak Period).
+During Exclusive Control Months, the discharge cap switches from a monthly event count (`n_max_events`) to a monthly cycled-energy budget (`max_cycles_per_day`). This energy budget is tracked separately for each calendar month and resets at the start of each new year. The budget uses a 365-day year, so February always has 28 days, including in leap years. `peak_window` switches roles from "eligible to discharge" to "no charging allowed" (e.g. a utility's Class A Peak Period).
 
 #### Local-control bill minimization
 
