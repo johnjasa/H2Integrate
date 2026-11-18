@@ -1,10 +1,14 @@
-import warnings
 from collections.abc import Iterable
 
 import numpy as np
 from openmdao.utils.units import convert_units, simplify_unit
+from openmdao.core.analysis_error import AnalysisError
 
-from h2integrate.finances.tools import _compute_rate_units
+from h2integrate.finances.tools import (
+    _compute_rate_units,
+    validate_finance_inputs,
+    check_minimum_annual_production,
+)
 from h2integrate.core.supported_models import register
 from h2integrate.finances.profast_baseclass import ProFastBase
 
@@ -26,7 +30,11 @@ class ProFastNPV(ProFastBase):
 
     Outputs:
         NPV_<commodity> (float): Net Present Value of the commodity in USD.
+        NPV_<commodity>_valid (bool): Whether NPV is valid for the current evaluation.
+        NPV_<commodity>_status (str): Validity status for the current model evaluation.
     """
+
+    _has_financial_validity = True
 
     def add_model_specific_outputs(self):
         """Define NPV output variable for the model.
@@ -41,6 +49,8 @@ class ProFastNPV(ProFastBase):
             val=0.0,
             units="USD",
         )
+        self.add_discrete_output(f"NPV_{self.output_txt}_valid", val=False)
+        self.add_discrete_output(f"NPV_{self.output_txt}_status", val="not_evaluated")
 
         return
 
@@ -92,17 +102,52 @@ class ProFastNPV(ProFastBase):
             units=self.commodity_sell_price_units,
         )
 
-    def compute(self, inputs, outputs):
+    def invalidate_financial_result(
+        self, status: str = "not_evaluated", *, preserve_specific: bool = False
+    ) -> None:
+        """Mark the previous NPV unavailable for the current evaluation."""
+        result_name = f"NPV_{self.output_txt}"
+        if preserve_specific and self._discrete_outputs[f"{result_name}_status"] in (
+            "unsupported_zero_production",
+            "production_requirement_violated",
+        ):
+            return
+        self._outputs[result_name] = np.nan
+        self._discrete_outputs[f"{result_name}_valid"] = False
+        self._discrete_outputs[f"{result_name}_status"] = status
+
+    def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
         """Compute the NPV of the commodity using ProFAST cash flows.
 
         Args:
             inputs (dict): Model inputs, including `sell_price_<commodity>`.
             outputs (dict): Model outputs to populate with NPV results.
+            discrete_inputs (dict): Discrete component inputs.
+            discrete_outputs (dict): NPV validity and status outputs.
 
         Returns:
             None
         """
+        result_name = f"NPV_{self.output_txt}"
+        # Clear the previous result before validating or running ProFAST
+        self.invalidate_financial_result("analysis_failed")
+        commodity = self.options["commodity_type"]
+        has_production = validate_finance_inputs(inputs, commodity, self.pathname)
         io_meta_data = self.get_io_metadata()
+        capacity_units = io_meta_data[f"rated_{commodity}_production"]["units"]
+        violation = check_minimum_annual_production(
+            inputs, commodity, capacity_units, self.production_requirement
+        )
+        if violation:
+            discrete_outputs[f"{result_name}_status"] = "production_requirement_violated"
+            raise AnalysisError(f"{self.pathname}: {violation}")
+        if not has_production:
+            discrete_outputs[f"{result_name}_status"] = "unsupported_zero_production"
+            raise AnalysisError(
+                f"{self.pathname}: ProFAST NPV for zero production is not supported; "
+                "its cash flow cannot be calculated faithfully with zero capacity or utilization"
+            )
+
         self.price_units = io_meta_data[f"sell_price_{self.output_txt}"]["units"]
         self.commodity_amount_units = simplify_unit(f"USD/({self.price_units})")
 
@@ -115,21 +160,6 @@ class ProFastNPV(ProFastBase):
         ]
         conversion_ratio = convert_units(1, rate_units_from_price, rate_units_capacity)
 
-        non_pos_prod = inputs[f"rated_{self.options['commodity_type']}_production"][0] <= 0
-        has_zero_cf = np.all(inputs["capacity_factor"] == 0.0)
-
-        if non_pos_prod or has_zero_cf:
-            # Has either zero rated production or zero capacity factor
-            outputs[f"NPV_{self.output_txt}"] = -1e20
-            bug_desc = "capacity" if non_pos_prod else "capacity factor"
-            msg = (
-                f"Commodity stream for finance group has a zero {bug_desc}. "
-                "If you recieve this warning multiple times, there may be a problem "
-                "with your setup. ProFAST is not being run on this iteration and the "
-                f"NPV_{self.output_txt} is being set to default value of -1e20"
-            )
-            warnings.warn(msg, UserWarning)
-            return
         # ensure that sell price units are compatible with the rate units
         if float(conversion_ratio) != 1.0:
             # convert rate units to units compatible with the price_units
@@ -152,4 +182,9 @@ class ProFastNPV(ProFastBase):
         # ProFAST needs the non-zero price padding when installation time is not divisible by 12.
         sell_profile = np.concatenate([np.full(non_op_Nyears, sell_price[0]), sell_price])
 
-        outputs[f"NPV_{self.output_txt}"] = pf.cash_flow(price=sell_profile)
+        npv = pf.cash_flow(price=sell_profile)
+        if not np.isfinite(npv):
+            raise AnalysisError(f"{self.pathname}: ProFAST returned a nonfinite NPV")
+        outputs[result_name] = npv
+        discrete_outputs[f"{result_name}_valid"] = True
+        discrete_outputs[f"{result_name}_status"] = "valid"

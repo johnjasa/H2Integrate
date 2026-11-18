@@ -68,6 +68,8 @@ def print_results(model, includes=None, excludes=None, show_units=True):
     def _mean(value):
         if isinstance(value, np.ndarray):
             return "nan" if value.size == 0 else f"{np.mean(value)}"
+        if isinstance(value, str):
+            return value
         if isinstance(value, int | float | np.number):
             return f"{value}"
         return "n/a"

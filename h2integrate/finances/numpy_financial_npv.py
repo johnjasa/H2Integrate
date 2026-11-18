@@ -6,9 +6,15 @@ import openmdao.api as om
 import numpy_financial as npf
 from attrs import field, define, validators
 from openmdao.utils.units import convert_units
+from openmdao.core.analysis_error import AnalysisError
 
 from h2integrate.core.utilities import BaseConfig
-from h2integrate.finances.tools import _compute_rate_units, check_plant_config_and_profast_params
+from h2integrate.finances.tools import (
+    _compute_rate_units,
+    validate_finance_inputs,
+    check_minimum_annual_production,
+    check_plant_config_and_profast_params,
+)
 from h2integrate.core.supported_models import register
 
 
@@ -120,6 +126,8 @@ class NumpyFinancialNPV(om.ExplicitComponent):
             (e.g., discount rate, plant life, save options).
     """
 
+    _has_financial_validity = True
+
     def initialize(self):
         self.options.declare("driver_config", types=dict)
         self.options.declare("plant_config", types=dict)
@@ -139,8 +147,15 @@ class NumpyFinancialNPV(om.ExplicitComponent):
         self.output_txt = f"{commodity_type}{suffix}"
 
         self.add_output(self.NPV_str, val=0.0, units="USD")
+        self.add_discrete_output(f"{self.NPV_str}_valid", val=False)
+        self.add_discrete_output(f"{self.NPV_str}_status", val="not_evaluated")
 
         plant_config = self.options["plant_config"]
+        self.production_requirement = plant_config["finance_parameters"].get(
+            "minimum_annual_production"
+        )
+        # Refresh finance after each optimization trial, even for reporting-only subgroups
+        self.options["always_opt"] = True
         finance_params = plant_config["finance_parameters"]["model_inputs"]
         if "plant_life" in finance_params:
             check_plant_config_and_profast_params(
@@ -192,7 +207,27 @@ class NumpyFinancialNPV(om.ExplicitComponent):
             units=self.config.commodity_sell_price_units,
         )
 
-    def compute(self, inputs, outputs):
+    def invalidate_financial_result(
+        self,
+        status: str = "not_evaluated",
+        *,
+        preserve_specific: bool = False,
+        reason: str = "Finance evaluation has not completed",
+    ) -> None:
+        """Mark outputs and requested exports unavailable for the current evaluation."""
+        if (
+            preserve_specific
+            and self._discrete_outputs[f"{self.NPV_str}_status"]
+            == "production_requirement_violated"
+        ):
+            return
+        self._outputs[self.NPV_str] = np.nan
+        self._discrete_outputs[f"{self.NPV_str}_valid"] = False
+        self._discrete_outputs[f"{self.NPV_str}_status"] = status
+        if self.config.save_npv_breakdown or self.config.save_cost_breakdown:
+            self._save_cost_breakdown_files({}, {}, np.nan, unavailable=(status, reason))
+
+    def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
         """Compute the Net Present Value (NPV).
 
         Calculates discounted cash flows over the plant lifetime, accounting for:
@@ -211,6 +246,8 @@ class NumpyFinancialNPV(om.ExplicitComponent):
                 CAPEX, OPEX, and optional replacement periods.
             outputs (dict-like): Dictionary for storing computed outputs, including
                 the NPV result.
+            discrete_inputs (dict-like): Discrete component inputs.
+            discrete_outputs (dict-like): NPV validity and status outputs.
 
         Produces:
             * `outputs[self.NPV_str]`: The total NPV in USD.
@@ -224,7 +261,19 @@ class NumpyFinancialNPV(om.ExplicitComponent):
             FileNotFoundError: If the specified output directory cannot be created.
             ValueError: If refurbishment schedules cannot be derived from inputs.
         """
+        # Invalidate old results before a new evaluation can fail
+        self.invalidate_financial_result("analysis_failed")
+        commodity = self.options["commodity_type"]
+        validate_finance_inputs(inputs, commodity, self.pathname)
         io_meta_data = self.get_io_metadata()
+        capacity_units = io_meta_data[f"rated_{commodity}_production"]["units"]
+        violation = check_minimum_annual_production(
+            inputs, commodity, capacity_units, self.production_requirement
+        )
+        if violation:
+            message = f"{self.pathname}: {violation}"
+            self.invalidate_financial_result("production_requirement_violated", reason=message)
+            raise AnalysisError(message)
         self.price_units = io_meta_data[f"sell_price_{self.output_txt}"]["units"]
         self.commodity_amount_units = self.price_units.replace("USD/", "").strip("()")
         rate_units_capacity = io_meta_data[f"rated_{self.options['commodity_type']}_production"][
@@ -243,7 +292,10 @@ class NumpyFinancialNPV(om.ExplicitComponent):
             capacity = inputs[f"rated_{self.options['commodity_type']}_production"]
 
         # Extract annual production based on commodity type
-        annual_production = inputs["capacity_factor"] * capacity * 8760
+        with np.errstate(over="ignore", invalid="ignore"):
+            annual_production = inputs["capacity_factor"] * capacity * 8760
+        if not np.all(np.isfinite(annual_production)):
+            raise AnalysisError(f"{self.pathname}: annual production must be finite")
 
         # By convention in NPV calculations, investments (capex, opex, refurbishment) are
         # negative cash flows while revenues are positive. This follows the numpy_financial
@@ -300,11 +352,11 @@ class NumpyFinancialNPV(om.ExplicitComponent):
 
                 # Find refurbishment period either from explicit config or calculated from hours
                 if "refurbishment_period_years" in tech_capex_info:
-                    refurb_schedule = np.zeros(self.params.plant_life)
+                    refurb_schedule = np.zeros(self.config.plant_life)
                     refurb_period = tech_capex_info["refurbishment_period_years"]
                     # Set replacement cost at regular intervals (every refurb_period years)
                     # replacement_cost_percent is fraction of original CAPEX (e.g., 0.15 = 15%)
-                    refurb_schedule[refurb_period : self.params.plant_life : refurb_period] = (
+                    refurb_schedule[refurb_period : self.config.plant_life : refurb_period] = (
                         tech_capex_info["replacement_cost_percent"]
                     )
                 else:
@@ -318,7 +370,7 @@ class NumpyFinancialNPV(om.ExplicitComponent):
                 # capex is negative, so refurb_cost will also be negative (cash outflow)
                 refurb_cost = capex * refurb_schedule
                 # Add refurbishment schedule to cost breakdown
-                cost_breakdown[f"{tech}: replacement cost"] = refurb_cost
+                cost_breakdown[f"{tech}: replacement cost"] = np.concatenate(([0.0], refurb_cost))
 
         # Calculate NPV for each cost category and sum to get total NPV
         # This iterative approach also builds npv_cost_breakdown for optional reporting.
@@ -334,12 +386,13 @@ class NumpyFinancialNPV(om.ExplicitComponent):
             npv_item_check += float(npv_item)
             npv_cost_breakdown[cost_type] = float(npv_item)
 
-        # Store final NPV result in outputs
-        outputs[self.NPV_str] = npv_item_check
-
-        # Optionally save detailed breakdowns to CSV files for analysis
+        if not np.isfinite(npv_item_check):
+            raise AnalysisError(f"{self.pathname}: NPV calculation returned a nonfinite value")
         if self.config.save_cost_breakdown or self.config.save_npv_breakdown:
             self._save_cost_breakdown_files(cost_breakdown, npv_cost_breakdown, npv_item_check)
+        outputs[self.NPV_str] = npv_item_check
+        discrete_outputs[f"{self.NPV_str}_valid"] = True
+        discrete_outputs[f"{self.NPV_str}_status"] = "valid"
 
     def _real_to_nominal_rate(self, real_rate):
         """Convert a real rate to a nominal rate via the Fisher equation.
@@ -402,7 +455,9 @@ class NumpyFinancialNPV(om.ExplicitComponent):
         wacc = equity_weight * nominal_equity_rate + debt_weight * nominal_debt_rate
         return wacc
 
-    def _save_cost_breakdown_files(self, cost_breakdown, npv_cost_breakdown, total_npv):
+    def _save_cost_breakdown_files(
+        self, cost_breakdown, npv_cost_breakdown, total_npv, unavailable=None
+    ):
         """Save cost breakdown and/or NPV breakdown to CSV files.
 
         Creates CSV files containing detailed breakdowns of costs and NPV calculations
@@ -415,6 +470,7 @@ class NumpyFinancialNPV(om.ExplicitComponent):
             npv_cost_breakdown (dict): Dictionary mapping cost categories to their NPV values.
                 Keys are category names, values are floats representing discounted present value.
             total_npv (float): The total NPV summed across all categories in USD.
+            unavailable (tuple[str, str] | None): Status and reason when no result is available.
 
         File Formats:
             NPV breakdown CSV: Single column with cost category as index and NPV as value.
@@ -442,6 +498,15 @@ class NumpyFinancialNPV(om.ExplicitComponent):
                 .strip("_")
             )
             filename_base = f"{fdesc}_{self.options['commodity_type']}_{desc}_NumpyFinancialNPV"
+
+        if unavailable is not None:
+            status, reason = unavailable
+            data = pd.DataFrame([{"status": status, "reason": reason}])
+            if self.config.save_npv_breakdown:
+                data.to_csv(output_dir / f"{filename_base}_NPV_breakdown.csv", index=False)
+            if self.config.save_cost_breakdown:
+                data.to_csv(output_dir / f"{filename_base}_cost_breakdown.csv", index=False)
+            return
 
         # Save NPV breakdown: single value per cost category
         if self.config.save_npv_breakdown:

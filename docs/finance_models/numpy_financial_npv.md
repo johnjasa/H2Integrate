@@ -47,6 +47,15 @@ npv:
 | Name              | Units | Description                                        |
 | ----------------- | ----- | -------------------------------------------------- |
 | `NPV_<commodity>_<optional_description>` | `USD` | Total discounted Net Present Value for the system. |
+| `NPV_<commodity>_<optional_description>_valid` | - | Whether the NPV is valid for the current evaluation. |
+| `NPV_<commodity>_<optional_description>_status` | - | Result status, including `valid`, `not_evaluated`, or an error status. |
+
+Unlike ProFAST, this model can evaluate zero production using its actual modeled
+cash flows. An unbuilt project with no costs has zero NPV; an idle installed
+asset can have negative NPV from capital and operating costs. This is a pre-tax
+calculation and is not a replacement for ProFAST's full financial treatment.
+The [optional annual production requirement](financeparameters:validity) can
+still make zero or insufficient production infeasible.
 
 ### Output Files (if enabled)
 

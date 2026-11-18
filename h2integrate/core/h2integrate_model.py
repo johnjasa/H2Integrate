@@ -47,6 +47,28 @@ class State(IntEnum):
     POST_PROCESS = 3
 
 
+class _FinanceEvaluationGroup(om.Group):
+    """Invalidate previous financial results before each model evaluation."""
+
+    def initialize(self) -> None:
+        self.options.declare("finance_components", types=list, recordable=False)
+
+    def run_solve_nonlinear(self) -> None:
+        # Preserve results for systems outside the current optimizer execution phase
+        for component in self.options["finance_components"]:
+            if self._relevance.is_relevant_system(component.pathname):
+                component.invalidate_financial_result()
+        completed = False
+        try:
+            super().run_solve_nonlinear()
+            completed = True
+        finally:
+            # A downstream failure can happen after finance has already run
+            if not completed:
+                for component in self.options["finance_components"]:
+                    component.invalidate_financial_result("analysis_failed", preserve_specific=True)
+
+
 class H2IntegrateModel:
     def __init__(self, config_input):
         # read in config file; it's a yaml dict that looks like this:
@@ -71,7 +93,11 @@ class H2IntegrateModel:
 
         # Check if create_om_reports is specified in driver config
         create_om_reports = self.driver_config.get("general", {}).get("create_om_reports", True)
-        self.prob = om.Problem(reports=create_om_reports)
+        self._financial_result_components = []
+        self.prob = om.Problem(
+            model=_FinanceEvaluationGroup(finance_components=self._financial_result_components),
+            reports=create_om_reports,
+        )
         self.model = self.prob.model
 
         # initialize recorder_path attribute
@@ -1062,15 +1088,18 @@ class H2IntegrateModel:
                             "model", ""
                         ):
                             finance_object = self.supported_models[finance_name]
+                            finance_component = finance_object(
+                                driver_config=self.driver_config,
+                                plant_config=self.plant_config,
+                                tech_config=individual_tech_config,
+                            )
                             tech_group.add_subsystem(
                                 f"{tech_name}_finance",
-                                finance_object(
-                                    driver_config=self.driver_config,
-                                    plant_config=self.plant_config,
-                                    tech_config=individual_tech_config,
-                                ),
+                                finance_component,
                                 promotes=["*"],
                             )
+                            if getattr(finance_component, "_has_financial_validity", False):
+                                self._financial_result_components.append(finance_component)
                             self.finance_models.append(finance_object)
 
         for tech_name, individual_tech_config in self.technology_config["technologies"].items():
@@ -1445,6 +1474,7 @@ class H2IntegrateModel:
             # Initialize counter to check if invalid combination of finance
             # groups exist within a finance subgroup
             n_tech_finances_in_group = 0
+            added_adjusted_capacity_factor = False
             for finance_group_name in finance_group_names:
                 # check if using tech-specific finance model
                 if any(
@@ -1457,6 +1487,11 @@ class H2IntegrateModel:
 
                     # this is created in create_technology_models()
                     if tech_finance_group_name is not None:
+                        if subgroup_params.get("minimum_annual_production") is not None:
+                            raise NotImplementedError(
+                                f"minimum_annual_production is not supported for technology-local "
+                                f"finance in subgroup '{subgroup_name}'"
+                            )
                         n_tech_finances_in_group += 1
                         # tech specific finance models are created in create_technology_models()
                         # and do not need to be included in the system finance models.
@@ -1481,6 +1516,16 @@ class H2IntegrateModel:
 
                 if fin_model is None:
                     raise ValueError(f"finance model '{model_name}' not found.")
+                production_requirement = subgroup_params.get("minimum_annual_production")
+                if production_requirement is not None and model_name not in (
+                    "ProFastLCO",
+                    "ProFastNPV",
+                    "NumpyFinancialNPV",
+                ):
+                    raise NotImplementedError(
+                        f"minimum_annual_production is not supported by finance model "
+                        f"'{model_name}' in subgroup '{subgroup_name}'"
+                    )
 
                 # filter the plant_config so the finance_parameters only includes data for
                 # this finance model group
@@ -1500,6 +1545,10 @@ class H2IntegrateModel:
                         }
                     }
                 )
+                if production_requirement is not None:
+                    filtered_plant_config["finance_parameters"]["minimum_annual_production"] = (
+                        production_requirement
+                    )
 
                 commodity_desc = subgroup_params.get("commodity_desc", "")
                 commodity_output_desc = subgroup_params.get("commodity_desc", "")
@@ -1540,11 +1589,16 @@ class H2IntegrateModel:
                         )
                         raise ValueError(msg)
 
-                    adj_cf_comp = AdjustedCapacityFactorComp(
-                        plant_config=filtered_plant_config,
-                        commodity_type=commodity,
-                    )
-                    finance_subgroup.add_subsystem("adjusted_cf_comp", adj_cf_comp, promotes=["*"])
+                    # Multiple finance models share the same production adjustment
+                    if not added_adjusted_capacity_factor:
+                        adj_cf_comp = AdjustedCapacityFactorComp(
+                            plant_config=filtered_plant_config,
+                            commodity_type=commodity,
+                        )
+                        finance_subgroup.add_subsystem(
+                            "adjusted_cf_comp", adj_cf_comp, promotes=["*"]
+                        )
+                        added_adjusted_capacity_factor = True
 
                 # create the finance component
                 fin_comp = fin_model(
@@ -1554,6 +1608,8 @@ class H2IntegrateModel:
                     commodity_type=commodity,
                     description=commodity_output_desc,
                 )
+                if getattr(fin_comp, "_has_financial_validity", False):
+                    self._financial_result_components.append(fin_comp)
 
                 # name the finance component based on the commodity and description
                 finance_subsystem_name = (

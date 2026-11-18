@@ -113,6 +113,19 @@ We define the following properties for this constraint:
 
 This is not an exhaustive list of the constraint specifications.
 
+```{important}
+An LCO objective or constraint is undefined at zero production and raises
+`AnalysisError`; it is not replaced with a finite penalty. Start from a
+producing design and use meaningful design bounds and production or service
+constraints to keep trial points feasible. Constraints alone do not guarantee
+that an optimizer will never evaluate an infeasible trial point.
+
+The SciPy drivers can terminate on such an error. Some pyOptSparse optimizers
+can reject failed analyses, but recovery depends on the optimizer and has not
+been verified for every driver. See
+[economic validity and production requirements](financeparameters:validity).
+```
+
 ```{note}
 Any keyword arguments that are accepted by the OpenMDAO `add_constraint` method can be used in the constraint specification.
 See [this doc page](https://openmdao.org/newdocs/versions/latest/features/core_features/adding_desvars_cons_objs/adding_constraint.html) for more details and an exhaustive list of options.

@@ -315,10 +315,9 @@ def format_profast_price_breakdown_per_year(price_breakdown):
         )
     ]
 
-    n_years = len(price_breakdown.iloc[0]["Amount"])
-    year_cols = [f"Year {i} Amount" for i in range(n_years)]
-
-    amount_df = pd.DataFrame(np.array(price_breakdown["Amount"].to_list()), columns=year_cols)
+    # ProFAST cash-flow rows can have different lengths and nonconsecutive indices
+    amount_df = pd.DataFrame(price_breakdown["Amount"].to_list(), index=price_breakdown.index)
+    amount_df.columns = [f"Year {i} Amount" for i in range(amount_df.shape[1])]
     formatted_df = pd.concat(
         [price_breakdown[["Type", "Name"]], amount_df, price_breakdown["NPV"]], axis=1
     )

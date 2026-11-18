@@ -1,6 +1,92 @@
 import re
+from typing import Any
 
+import numpy as np
 from openmdao.utils.units import _find_unit, convert_units, is_compatible, simplify_unit
+from openmdao.core.analysis_error import AnalysisError
+
+
+def check_minimum_annual_production(
+    inputs: Any,
+    commodity_type: str,
+    capacity_units: str | None,
+    requirement: dict | None,
+) -> str | None:
+    """Return a message if annual production is below the configured minimum.
+
+    Args:
+        inputs: Continuous finance inputs.
+        commodity_type: Commodity whose production is checked.
+        capacity_units: Units of the rated production rate.
+        requirement: Minimum annual amount and units, or None.
+
+    Returns:
+        str | None: A description of the first violation, or None.
+
+    Raises:
+        ValueError: If the requirement or its units are invalid.
+        AnalysisError: If annual production is nonfinite.
+    """
+    if requirement is None:
+        return None
+    value, units = requirement["value"], requirement["units"]
+    if not np.isfinite(value) or value <= 0:
+        raise ValueError("minimum_annual_production value must be positive and finite")
+    if not isinstance(units, str) or not units.strip():
+        raise ValueError("minimum_annual_production units must not be empty")
+    if not capacity_units:
+        raise ValueError("rated production units are required")
+    try:
+        capacity = convert_units(
+            inputs[f"rated_{commodity_type}_production"][0], capacity_units, f"({units})/h"
+        )
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"minimum_annual_production units '{units}' are "
+            f"incompatible with rated production units '{capacity_units}'"
+        ) from error
+    with np.errstate(over="ignore", invalid="ignore"):
+        annual_production = capacity * inputs["capacity_factor"] * 8760
+    if not np.all(np.isfinite(annual_production)):
+        raise AnalysisError("annual production must be finite")
+    deficient_years = np.flatnonzero(annual_production < value)
+    if deficient_years.size:
+        year = int(deficient_years[0])
+        return (
+            f"minimum annual production requirement is violated in operating year {year + 1}: "
+            f"{annual_production[year]} {units} is below {value} {units}"
+        )
+    return None
+
+
+def validate_finance_inputs(inputs: Any, commodity_type: str, component_path: str) -> bool:
+    """Validate finance inputs and report whether any production is available.
+
+    Args:
+        inputs: Continuous OpenMDAO inputs for the financial component.
+        commodity_type: Commodity whose rated production is being evaluated.
+        component_path: OpenMDAO component path for error messages.
+
+    Returns:
+        bool: Whether the rated capacity and at least one capacity factor are positive.
+
+    Raises:
+        AnalysisError: If an input is nonfinite, capacity is negative, or a capacity factor
+            is outside the physical range from zero to one.
+    """
+    for name, value in inputs.items():
+        if not np.all(np.isfinite(value)):
+            raise AnalysisError(f"{component_path}: finance input '{name}' must be finite")
+
+    capacity_name = f"rated_{commodity_type}_production"
+    capacity = inputs[capacity_name][0]
+    if capacity < 0:
+        raise AnalysisError(f"{component_path}: '{capacity_name}' must be nonnegative")
+
+    capacity_factor = inputs["capacity_factor"]
+    if np.any((capacity_factor < 0) | (capacity_factor > 1)):
+        raise AnalysisError(f"{component_path}: 'capacity_factor' must be between 0 and 1")
+    return bool(capacity > 0 and np.any(capacity_factor > 0))
 
 
 def check_plant_config_and_profast_params(

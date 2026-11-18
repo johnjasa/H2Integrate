@@ -37,6 +37,19 @@ ProFAST will apply the commodity escalation rate to the `commodity_sell_price` i
 ## Output values and naming convention
 ``ProFastNPV`` outputs the following data following the naming convention detailed below:
 - `NPV_<commodity_and_descriptor>`: net present value of commodity in USD.
+- `NPV_<commodity_and_descriptor>_valid` and `NPV_<commodity_and_descriptor>_status`: validity and status of the result.
+
+ProFAST NPV with zero production across the entire operating life is currently
+unsupported and raises `AnalysisError`, with status
+`unsupported_zero_production`. This applies to both an unbuilt project and an
+installed but idle asset; it does not assert that their true NPVs are equal.
+No artificial capacity or penalty is substituted.
+
+A zero-production year in an otherwise producing lifetime is supported when
+its variable costs and coproduct revenues are zero. Nonzero amounts in such a
+year raise an error instead of being divided by zero or silently dropped.
+For a simpler pre-tax cash-flow model that can evaluate idle assets, see
+{doc}`numpy_financial_npv`.
 
 **Naming convention**:
 - `<commodity_and_descriptor>`:

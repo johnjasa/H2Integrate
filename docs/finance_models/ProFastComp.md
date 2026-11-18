@@ -52,6 +52,20 @@ If you are setting `save_profast_results` to `True` and are using multiple finan
 - `profit_index_<commodity_and_descriptor>`
 - `investor_payback_period_<commodity_and_descriptor>`: time until initial investment costs are recovered in years.
 - `price_<commodity_and_descriptor>`: first year price of commodity in same units as levelized cost.
+- `LCO<x_and_descriptor>_valid` and `LCO<x_and_descriptor>_status`: whether the result is valid and why it is unavailable.
+
+For zero production, LCO and its associated calculated values are undefined.
+Reporting-only evaluations return `NaN`, an empty breakdown, and status
+`undefined_zero_production` with a warning. A driver response, downstream
+connection, or iterative residual that needs the undefined value raises
+`AnalysisError`. WACC and CRF outputs are also invalidated because this
+component obtains them from the ProFAST solution rather than calculating
+independent values.
+
+In a zero-production year of an otherwise producing project, zero variable
+cost is accepted. A nonzero variable cost or coproduct revenue for that year
+raises an error because ProFAST's per-unit representation cannot preserve it.
+See [economic validity and production requirements](financeparameters:validity).
 
 **Naming convention**:
 - `<commodity_and_descriptor>`:

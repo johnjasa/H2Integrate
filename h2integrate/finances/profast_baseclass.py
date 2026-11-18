@@ -2,6 +2,7 @@ import attrs
 import numpy as np
 import openmdao.api as om
 from attrs import field, define, validators
+from openmdao.core.analysis_error import AnalysisError
 
 from h2integrate.core.utilities import BaseConfig, attr_filter, attr_serializer
 from h2integrate.finances.tools import check_plant_config_and_profast_params
@@ -563,6 +564,11 @@ class ProFastBase(SkippableComputeMixin, om.ExplicitComponent):
 
         # Load plant configuration and financial parameters
         plant_config = self.options["plant_config"]
+        self.production_requirement = plant_config["finance_parameters"].get(
+            "minimum_annual_production"
+        )
+        # Refresh finance after each optimization trial, even for reporting-only subgroups
+        self.options["always_opt"] = True
         finance_params = plant_config["finance_parameters"]["model_inputs"]["params"]
         fin_params = check_parameter_inputs(finance_params, plant_config)
 
@@ -629,13 +635,16 @@ class ProFastBase(SkippableComputeMixin, om.ExplicitComponent):
         profast_params["commodity"].update({"unit": self.commodity_amount_units})
 
         # calculate capacity and total production based on commodity type
-        capacity = inputs[f"rated_{self.options['commodity_type']}_production"][0] * 24
         utilization = dict(zip(years_of_operation, inputs["capacity_factor"]))
-        total_production = (
-            inputs["capacity_factor"]
-            * inputs[f"rated_{self.options['commodity_type']}_production"]
-            * 8760
-        )
+        with np.errstate(over="ignore", invalid="ignore"):
+            capacity = inputs[f"rated_{self.options['commodity_type']}_production"][0] * 24
+            total_production = (
+                inputs["capacity_factor"]
+                * inputs[f"rated_{self.options['commodity_type']}_production"]
+                * 8760
+            )
+        if not np.isfinite(capacity) or not np.all(np.isfinite(total_production)):
+            raise AnalysisError(f"{self.pathname}: annual production must be finite")
 
         # define profast parameters for capacity and utilization
         profast_params["capacity"] = capacity
@@ -720,11 +729,25 @@ class ProFastBase(SkippableComputeMixin, om.ExplicitComponent):
 
             # add VarOpEx cost to tech-specific variable cost entry
 
-            # if VarOpEx is positive, treat as a feedstock
             varopex_adjusted_tech = inputs[f"varopex_adjusted_{tech}"]
+            no_production = total_production == 0
+            if np.any(no_production & (varopex_adjusted_tech != 0)):
+                raise AnalysisError(
+                    f"{self.pathname}: technology '{tech}' has nonzero variable cost in a "
+                    "year with zero production; ProFAST cannot express it per unit of output"
+                )
 
-            if np.any(varopex_adjusted_tech >= 0):
-                varopex_cost_per_unit_commodity = varopex_adjusted_tech / total_production
+            # Keep expenses and coproduct revenues distinct in each operating year
+            positive_expense = np.maximum(varopex_adjusted_tech, 0)
+            coproduct_revenue = np.maximum(-varopex_adjusted_tech, 0)
+            if np.any(positive_expense) or not np.any(coproduct_revenue):
+                # Zero cost in a zero-output year contributes no per-unit expense
+                varopex_cost_per_unit_commodity = np.divide(
+                    positive_expense,
+                    total_production,
+                    out=np.zeros_like(varopex_adjusted_tech),
+                    where=~no_production,
+                )
                 varopex_dict = dict(zip(years_of_operation, varopex_cost_per_unit_commodity))
                 tech_varopex_info.update({"cost": varopex_dict})
 
@@ -733,15 +756,18 @@ class ProFastBase(SkippableComputeMixin, om.ExplicitComponent):
                     tech_varopex_info.setdefault(var_cost_key, var_cost_val)
                 variable_costs[tech] = tech_varopex_info
 
-            # if VarOpEx is negative, treat as a coproduct
-            else:
+            if np.any(coproduct_revenue):
                 tech_coproduct_info = (
                     self.tech_config[tech]["model_inputs"]
                     .get("financial_parameters", {})
                     .get("coproducts", {})
                 )
-                # make it positive
-                coproduct_cost_per_unit_commodity = -1 * varopex_adjusted_tech / total_production
+                coproduct_cost_per_unit_commodity = np.divide(
+                    coproduct_revenue,
+                    total_production,
+                    out=np.zeros_like(varopex_adjusted_tech),
+                    where=~no_production,
+                )
                 coproduct_dict = dict(zip(years_of_operation, coproduct_cost_per_unit_commodity))
                 tech_coproduct_info.update({"cost": coproduct_dict})
 

@@ -673,27 +673,21 @@ def test_profast_npv_warnings(
     # Set rated capacity to 0
     prob.set_val("pf.rated_electricity_production", 0.0, units="kW")
 
-    with subtests.test("Test zero capacity warning"):
-        expected_str = "has a zero capacity."
-        with pytest.warns(UserWarning) as excinfo:
+    with subtests.test("Zero capacity is explicitly unsupported"):
+        with pytest.raises(om.AnalysisError, match=r"zero production.*not supported"):
             prob.run_model()
-        assert expected_str in str(excinfo.list[0].message)
-        assert str(excinfo.list[0].message).endswith("default value of -1e20")
-
-    with subtests.test("Test zero capacity value"):
-        assert prob.get_val("pf.NPV_electricity_no1", units="GUSD")[0] == -1e11
+        assert np.isnan(prob.get_val("pf.NPV_electricity_no1")[0])
+        assert not prob.get_val("pf.NPV_electricity_no1_valid")
+        assert prob.get_val("pf.NPV_electricity_no1_status") == "unsupported_zero_production"
 
     # Set capacity factor to 0
     prob.set_val("pf.rated_electricity_production", mean_hourly_production, units="kW")
     prob.set_val(
         "pf.capacity_factor", [0.0] * plant_config["plant"]["plant_life"], units="unitless"
     )
-    with subtests.test("Test zero capacity factor warning"):
-        expected_str = "has a zero capacity factor."
-        with pytest.warns(UserWarning) as excinfo:
+    with subtests.test("Zero capacity factor is explicitly unsupported"):
+        with pytest.raises(om.AnalysisError, match=r"zero production.*not supported"):
             prob.run_model()
-        assert expected_str in str(excinfo.list[0].message)
-        assert str(excinfo.list[0].message).endswith("default value of -1e20")
-
-    with subtests.test("Test zero capacity factor value"):
-        assert prob.get_val("pf.NPV_electricity_no1", units="GUSD")[0] == -1e11
+        assert np.isnan(prob.get_val("pf.NPV_electricity_no1")[0])
+        assert not prob.get_val("pf.NPV_electricity_no1_valid")
+        assert prob.get_val("pf.NPV_electricity_no1_status") == "unsupported_zero_production"

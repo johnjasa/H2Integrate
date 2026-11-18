@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 import openmdao.api as om
 from pytest import fixture
@@ -446,15 +447,12 @@ def test_profast_lco_warnings(
     # Set rated capacity to 0
     prob.set_val("pf.rated_electricity_production", 0.0, units="kW")
 
-    with subtests.test("Test zero capacity warning"):
-        expected_str = "has a zero capacity."
-        with pytest.warns(UserWarning) as excinfo:
+    with subtests.test("Zero capacity reports undefined LCO"):
+        with pytest.warns(UserWarning, match="undefined.*zero production"):
             prob.run_model()
-        assert expected_str in str(excinfo.list[0].message)
-        assert "default value of 1e12" in str(excinfo.list[0].message)
-
-    with subtests.test("Test zero capacity value"):
-        assert prob.get_val("pf.LCOE_no1", units="TUSD/(kW*h)")[0] == 1.0
+        assert np.isnan(prob.get_val("pf.LCOE_no1")[0])
+        assert not prob.get_val("pf.LCOE_no1_valid")
+        assert prob.get_val("pf.LCOE_no1_status") == "undefined_zero_production"
 
     # Set capacity factor to 0
     prob.set_val("pf.rated_electricity_production", mean_hourly_production, units="kW")
@@ -462,12 +460,9 @@ def test_profast_lco_warnings(
         "pf.capacity_factor", [0.0] * plant_config["plant"]["plant_life"], units="unitless"
     )
 
-    with subtests.test("Test zero capacity factor warning"):
-        expected_str = "has a zero capacity factor."
-        with pytest.warns(UserWarning) as excinfo:
+    with subtests.test("Zero capacity factor reports undefined LCO"):
+        with pytest.warns(UserWarning, match="undefined.*zero production"):
             prob.run_model()
-        assert expected_str in str(excinfo.list[0].message)
-        assert "default value of 1e12" in str(excinfo.list[0].message)
-
-    with subtests.test("Test zero capacity factor value"):
-        assert prob.get_val("pf.LCOE_no1", units="TUSD/(kW*h)")[0] == 1.0
+        assert np.isnan(prob.get_val("pf.LCOE_no1")[0])
+        assert not prob.get_val("pf.LCOE_no1_valid")
+        assert prob.get_val("pf.LCOE_no1_status") == "undefined_zero_production"

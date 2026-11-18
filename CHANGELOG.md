@@ -38,6 +38,7 @@
   - Monthly cycle budgets now use a 365-day year, so February always has 28 days.
   - Fixed the misspelled `_time_step_bounds` attribute so time steps from 300 to 3600 s are allowed as intended.
 - Evaluate system finance after coupled plant solves and completed time-marching simulations, with explicit checks for unsupported finance feedback. [PR 1010](https://github.com/NatLabRockies/H2Integrate/pull/1010)
+- Report financial validity explicitly, enforce optional annual production requirements, and reject unsupported zero-production ProFAST NPV calculations. [PR TBD](https://github.com/NatLabRockies/H2Integrate/pull/TBD)
 
 ## 0.10.0 [October 12, 2026]
 

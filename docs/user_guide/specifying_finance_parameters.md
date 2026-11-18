@@ -31,6 +31,56 @@ Acyclic, non-time-marching plants can use local finance and finance-to-technolog
 
 When system finance follows a coupled plant solve, the plant solver raises on nonconvergence rather than evaluating finance on a failed solve. An SLC configuration cannot disable `err_on_non_converge` in that case. These checks do not change the failure settings of independently configured nested solvers.
 
+(financeparameters:validity)=
+### Economic validity and production requirements
+
+`ProFastLCO`, `ProFastNPV`, and `NumpyFinancialNPV` expose discrete
+`<result>_valid` and `<result>_status` outputs. For example, `LCOH_valid` and
+`LCOH_status` describe `LCOH`. A result is valid only when its flag is true
+and its status is `valid`. Before evaluation the status is `not_evaluated`;
+the initial numeric default is not an economic result.
+
+An optional subgroup with zero production has an undefined LCO, not a finite
+penalty. `ProFastLCO` warns, reports `NaN` for its result-dependent values,
+clears the breakdown, and sets status to `undefined_zero_production`. It
+raises `AnalysisError` instead if an undefined value is a driver response,
+feeds another component, or would enter an iterative solver residual.
+
+Do not infer that production is required just because a finance subgroup exists.
+Use physical demand and service constraints where appropriate. Alternatively,
+set `minimum_annual_production` on a named subgroup for an explicit minimum
+amount in **each** operating year:
+
+```yaml
+finance_subgroups:
+  hydrogen:
+    commodity: hydrogen
+    commodity_stream: electrolyzer
+    technologies: [electrolyzer]
+    finance_groups: [profast]
+    minimum_annual_production:
+      value: 1000000.0
+      units: kg
+```
+
+The value must be positive and finite. Units are commodity amount units,
+such as `kg` or `MW*h`, not a rate. H2Integrate converts the rated production
+rate and applies each annual capacity factor before checking the threshold.
+A violation raises `AnalysisError` and sets status to
+`production_requirement_violated`. This option is supported by
+`ProFastLCO`, `ProFastNPV`, and `NumpyFinancialNPV`; other system or
+technology-local finance models reject it explicitly. To configure a
+requirement for the default group, define a named subgroup explicitly.
+The built-in finance components remain active during optimization trials,
+even when their results are not driver responses, so reports and configured
+production requirements remain current.
+
+Negative capacity, nonfinite finance inputs, and capacity factors outside
+`[0, 1]` raise an analysis error. If a financial evaluation or the enclosing
+model evaluation fails, result-dependent outputs are invalidated instead of
+retaining results from the preceding design. Requested exported files are
+replaced with an unavailable status until a later evaluation succeeds.
+
 ### Finance Groups vs. Finance Subgroups
 Within this framework, there are two distinct layers, **finance groups** and **finance subgroups**:
 
@@ -61,6 +111,8 @@ Within this framework, there are two distinct layers, **finance groups** and **f
     A text label to further distinguish outputs for a commodity. This is particularly useful when multiple finance models or subgroups reference the same commodity but need to produce separate outputs.
   - `commodity_stream`:
     A text label of a technology that outputs the specified ``commodity`` to use as the commodity production stream in finance calculations. This is required for every subgroup and lets you choose a specific commodity stream to use in finance calculations (such as the outputs of combiners or splitters).
+  - `minimum_annual_production` (optional):
+    A positive `value` and commodity amount `units` required in every operating year, as described in [economic validity](financeparameters:validity).
   - The below two parameters are only needed to [use a specified timeseries profile for finance calculations](fin:commodity_output_streams)
     - `use_commodity_stream_timeseries` (optional): A boolean that defaults to False. If True, then flags to use a timeseries profile for the finance calculation rather than the capacity factor and rated commodity production of the `commodity_stream` technology.
     - `commodity_stream_output`: The name of timeseries profile output variable from `commodity_stream` to use for the finance calculation(s). This parameter is required if `use_commodity_stream_timeseries` is True.

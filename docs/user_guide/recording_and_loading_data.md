@@ -104,6 +104,12 @@ recorder:
 ## Loading Recorder Files
 Detailed documentation on OpenMDAO's case read can be found [here](https://openmdao.org/newdocs/versions/latest/features/recording/case_reader.html).
 
+Include the relevant financial `<result>_valid` and `<result>_status` outputs
+when selecting recorded variables. Reporting-only undefined LCO values are
+recorded as `NaN` with a status explaining why; the SQL-to-CSV summary retains
+both the numeric value and the discrete status. See
+[economic validity](financeparameters:validity).
+
 Example usage of reading and accessing recorded data is shown in Example 8 (`examples/08_wind_electrolyzer/run_wind_electrolyzer.py`).
 
 Below is an example python script that shows how to load recorded data and to access the data available:
