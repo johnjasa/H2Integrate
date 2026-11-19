@@ -1,0 +1,115 @@
+packages:
+  idaes-pse: 2.13.0
+  pyomo: 6.10.1
+  watertap: 1.8.0
+  watertap-solvers: 24.12.9
+  prommis: 1.1.0
+ipopt_version: 3.13.2.0
+cases:
+  watertap_pressure_exchanger:
+    performance_parameters:
+      source: WaterTAP 1.8.0 RO_with_energy_recovery 0D simulation (pressure_exchanger)
+      commodity: water
+      product:
+        rate: 1.7832949471262451
+        units: m**3/h
+      commodity_amount_units: m**3
+      requirements:
+        feedwater:
+          rate: 3.6
+          units: m**3/h
+        electricity:
+          rate: 4.954958259261638
+          units: kW
+      coproducts:
+        concentrate:
+          rate: 1902.5536981312084
+          units: kg/h
+        concentrate_salt:
+          rate: 128.2776781312081
+          units: kg/h
+    validation:
+      termination: optimal
+      feed_mass_kg_per_h: 3677.2560000000003
+      feed_density_kg_per_m3: 1021.46
+      feed_temperature_k: 298.15
+      feed_pressure_pa: 101325
+      feed_salt_mass_fraction: 0.034999999999999996
+      permeate_mass_kg_per_h: 1774.7023018687921
+      permeate_density_kg_per_m3: 995.1815905320093
+      permeate_salt_mass_fraction: 0.00024019908485103846
+      permeate_limit_mass_fraction: 0.0005
+      water_mass_recovery: 0.5
+      membrane_area_m2: 54.34260728537925
+      water_residual_kg_per_h: 0.0
+      salt_residual_kg_per_h: 0.0
+      specific_pump_energy_kwh_per_m3: 2.7785410749054633
+  watertap_no_recovery:
+    performance_parameters:
+      source: WaterTAP 1.8.0 RO_with_energy_recovery 0D simulation (no_ERD)
+      commodity: water
+      product:
+        rate: 1.7832949471262451
+        units: m**3/h
+      commodity_amount_units: m**3
+      requirements:
+        feedwater:
+          rate: 3.6
+          units: m**3/h
+        electricity:
+          rate: 9.239452689183764
+          units: kW
+      coproducts:
+        concentrate:
+          rate: 1902.5536981312084
+          units: kg/h
+        concentrate_salt:
+          rate: 128.2776781312081
+          units: kg/h
+    validation:
+      termination: optimal
+      feed_mass_kg_per_h: 3677.2560000000003
+      feed_density_kg_per_m3: 1021.46
+      feed_temperature_k: 298.15
+      feed_pressure_pa: 101325
+      feed_salt_mass_fraction: 0.034999999999999996
+      permeate_mass_kg_per_h: 1774.7023018687921
+      permeate_density_kg_per_m3: 995.1815905320093
+      permeate_salt_mass_fraction: 0.00024019908485103846
+      permeate_limit_mass_fraction: 0.0005
+      water_mass_recovery: 0.5
+      membrane_area_m2: 54.34260728537926
+      water_residual_kg_per_h: 0.0
+      salt_residual_kg_per_h: 0.0
+      specific_pump_energy_kwh_per_m3: 5.18111303128684
+  prommis_decrepitation:
+    performance_parameters:
+      source: PrOMMiS 1.1.0 hydrogen_decrepitation_flowsheet reference furnace
+      commodity: decrepitated_magnet
+      product:
+        rate: 20.652078509836574
+        units: kg/h
+      commodity_amount_units: kg
+      requirements:
+        shredded_magnet:
+          rate: 20.652000000793052
+          units: kg/h
+        hydrogen:
+          rate: 0.04100975823087465
+          units: kg/h
+        heat:
+          rate: 3.761735329487005
+          units: kW
+      coproducts:
+        hydrogen:
+          rate: 0.04100975823087465
+          units: kg/h
+    validation:
+      termination: optimal
+      operating_temperature_k: 443.15
+      feed_temperature_k: 298.15
+      hydrogen_inlet_pressure_pa: 101325.0
+      feed_nd2fe14b_mass_fraction: 0.99
+      decrepitation_duration_h: 3.0
+      hydrogen_in_minus_out_kg_per_h: 0.0
+      inlet_minus_outlet_mass_kg_per_h: -7.850904352251636e-05

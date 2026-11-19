@@ -31,6 +31,7 @@ parts:
   - caption: Technology Models
     chapters:
       - file: technology_models/generic_converter_cost
+      - file: technology_models/offline_process
       - file: technology_models/transport
       - file: technology_models/combiners_and_splitters
       - file: technology_models/feedstocks

@@ -1,0 +1,27 @@
+name: offline_process_fixture
+description: Synthetic fixed operating point for interface testing only.
+technologies:
+  process:
+    performance_model:
+      model: OfflineProcessPerformanceModel
+    cost_model:
+      model: GenericConverterCostModel
+    model_inputs:
+      shared_parameters:
+        commodity: electricity
+        commodity_amount_units: kW*h
+      performance_parameters:
+        source: Synthetic interface fixture v1 (not an IDAES or WaterTAP solve)
+        product: {rate: 50.0, units: kW}
+        requirements:
+          fuel: {rate: 10.0, units: kg/h}
+        coproducts:
+          heat: {rate: 20.0, units: kW}
+      cost_parameters:
+        commodity_rate_units: kW
+        unit_capex: 0.0
+        unit_opex: 0.0
+        unit_varopex: 0.02
+        additional_capex_USD: 10000.0
+        additional_opex_USD_per_year: 500.0
+        cost_year: 2022

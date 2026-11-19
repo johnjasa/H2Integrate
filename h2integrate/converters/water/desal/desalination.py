@@ -1,5 +1,5 @@
 import numpy as np
-from attrs import field, define, validators
+from attrs import field, define, converters, validators
 
 from h2integrate.core.utilities import BaseConfig, merge_shared_inputs
 from h2integrate.core.model_baseclass import (
@@ -24,27 +24,64 @@ SALINITY_PROPERTIES = {
 
 
 @define(kw_only=True)
+class ReverseOsmosisDesignPointConfig(BaseConfig):
+    """Fixed operating point imported from an offline reverse osmosis solve.
+
+    Args:
+        source (str): Reference identifying the solver version and run settings.
+        feed_mass_flow_kg_per_hr (float): Total feed solution mass flow [kg/h].
+        feed_density_kg_per_m3 (float): Feed solution density [kg/m**3].
+        net_electricity_kw (float): Net electrical demand of the RO train [kW].
+        feed_salt_mass_fraction (float): Dissolved salt mass fraction of the feed solution.
+        permeate_salt_mass_fraction (float): Dissolved salt mass fraction of the permeate.
+        max_permeate_salt_mass_fraction (float): Maximum acceptable permeate salt mass fraction.
+
+    See :class:`ReverseOsmosisPerformanceModelConfig` and :doc:`/technology_models/desalination`.
+    """
+
+    source: str = field(validator=validators.instance_of(str))
+    feed_mass_flow_kg_per_hr: float = field(validator=validators.gt(0))
+    feed_density_kg_per_m3: float = field(validator=validators.gt(0))
+    net_electricity_kw: float = field(validator=validators.gt(0))
+    feed_salt_mass_fraction: float = field(
+        validator=validators.and_(validators.ge(0), validators.lt(1))
+    )
+    permeate_salt_mass_fraction: float = field(
+        validator=validators.and_(validators.ge(0), validators.lt(1))
+    )
+    max_permeate_salt_mass_fraction: float = field(
+        validator=validators.and_(validators.ge(0), validators.lt(1))
+    )
+
+
+@define(kw_only=True)
 class ReverseOsmosisPerformanceModelConfig(BaseConfig):
     """Configuration class for the ReverseOsmosisPerformanceModel.
 
     Args:
         freshwater_capacity_kg_per_hr (float): Desalination plant capacity, represented as
             the maximum freshwater production rate [kg/h].
-        salinity (str): "seawater" (>18,000 ppm) or "brackish" (<18,000 ppm). Sets the
+        salinity (str, optional): "seawater" (>18,000 ppm) or "brackish" (<18,000 ppm). Sets the
             recovery ratio (0.5 for seawater, 0.75 for brackish) and specific energy
-            consumption (4.0 kW*h/m**3 for seawater, 1.5 kW*h/m**3 for brackish).
+            consumption (4.0 kW*h/m**3 for seawater, 1.5 kW*h/m**3 for brackish). Specify
+            either salinity or a design point, not both.
         freshwater_density (float, optional): Density of the output freshwater [kg/m**3].
             Defaults to 997.
         mass_per_capacity (float, optional): Mass of the desalination system per unit of
             freshwater capacity [kg/(m**3/h)]. Defaults to 346.7.
         footprint_per_capacity (float, optional): Footprint of the desalination system per unit
             of freshwater capacity [m**2/(m**3/h)]. Defaults to 0.467.
+        design_point (ReverseOsmosisDesignPointConfig, optional): A fixed operating point.
+            In this mode, the configured freshwater capacity and density are the solved
+            permeate solution mass flow and density, respectively.
 
     See :class:`ReverseOsmosisPerformanceModel` and :doc:`/technology_models/desalination`.
     """
 
     freshwater_capacity_kg_per_hr: float = field(validator=validators.gt(0))
-    salinity: str = field(validator=validators.in_(list(SALINITY_PROPERTIES)))
+    salinity: str | None = field(
+        default=None, validator=validators.optional(validators.in_(list(SALINITY_PROPERTIES)))
+    )
     freshwater_density: float = field(validator=validators.gt(0), default=997)
 
     # Mass and footprint per unit of freshwater capacity.
@@ -59,6 +96,41 @@ class ReverseOsmosisPerformanceModelConfig(BaseConfig):
     # Voltage codes: 460 or 480 V / 3 phase / 60 Hz
     mass_per_capacity: float = field(validator=validators.gt(0), default=346.7)
     footprint_per_capacity: float = field(validator=validators.gt(0), default=0.467)
+    design_point: ReverseOsmosisDesignPointConfig | None = field(
+        default=None, converter=converters.optional(ReverseOsmosisDesignPointConfig.from_dict)
+    )
+
+    def __attrs_post_init__(self) -> None:
+        """Validate the choice of operating mode and the fixed point's mass balance."""
+        if (self.salinity is None) == (self.design_point is None):
+            raise ValueError("Specify exactly one of salinity or design_point.")
+        point = self.design_point
+        if point is None:
+            return
+        if not point.source.strip():
+            raise ValueError("design_point source must identify the offline solve.")
+        if not all(
+            np.isfinite(value)
+            for value in (
+                self.freshwater_capacity_kg_per_hr,
+                self.freshwater_density,
+                point.feed_mass_flow_kg_per_hr,
+                point.feed_density_kg_per_m3,
+                point.net_electricity_kw,
+            )
+        ):
+            raise ValueError("design_point mass flows, densities, and electricity must be finite.")
+        if point.permeate_salt_mass_fraction > point.max_permeate_salt_mass_fraction:
+            raise ValueError("design_point permeate exceeds the salt mass fraction limit.")
+        if point.permeate_salt_mass_fraction > point.feed_salt_mass_fraction:
+            raise ValueError("design_point permeate salt mass fraction exceeds that of the feed.")
+        concentrate_mass = point.feed_mass_flow_kg_per_hr - self.freshwater_capacity_kg_per_hr
+        concentrate_salt = (
+            point.feed_mass_flow_kg_per_hr * point.feed_salt_mass_fraction
+            - self.freshwater_capacity_kg_per_hr * point.permeate_salt_mass_fraction
+        )
+        if concentrate_mass <= 0 or concentrate_salt >= concentrate_mass:
+            raise ValueError("design_point feed and permeate do not yield a valid concentrate.")
 
 
 @register
@@ -66,7 +138,8 @@ class ReverseOsmosisPerformanceModel(PerformanceModelBaseClass):
     """Reverse osmosis desalination performance model.
 
     Freshwater production at each timestep is limited by the lowest of the plant capacity,
-    the available electricity, and the available feedwater.
+    the available electricity, and the available feedwater in salinity mode. With an imported
+    design point, the train runs only when enough resources are available for the full point.
 
     Inputs:
         electricity_in (ndarray): Electricity available to the plant [kW] at each timestep.
@@ -78,6 +151,9 @@ class ReverseOsmosisPerformanceModel(PerformanceModelBaseClass):
         water_out (ndarray): Freshwater produced [m**3/h] at each timestep.
         electricity_consumed (ndarray): Electricity consumed [kW] at each timestep.
         feedwater_consumed (ndarray): Feedwater consumed [m**3/h] at each timestep.
+        concentrate_mass_flow (ndarray): Concentrate mass flow [kg/h], design-point mode only.
+        concentrate_salt_mass_flow (ndarray): Concentrate salt mass flow [kg/h], design-point
+            mode only.
         mass (float): Mass of the desalination system [kg].
         footprint (float): Footprint of the desalination system [m**2].
 
@@ -146,25 +222,70 @@ class ReverseOsmosisPerformanceModel(PerformanceModelBaseClass):
         )
         self.add_output("mass", val=0.0, units="kg", desc="Mass of desalination system")
         self.add_output("footprint", val=0.0, units="m**2", desc="Footprint of desalination system")
+        if self.config.design_point is not None:
+            self.add_output(
+                "concentrate_mass_flow",
+                val=0.0,
+                shape=self.n_timesteps,
+                units="kg/h",
+                desc="Mass flow of concentrate solution leaving the desalination plant",
+            )
+            self.add_output(
+                "concentrate_salt_mass_flow",
+                val=0.0,
+                shape=self.n_timesteps,
+                units="kg/h",
+                desc="Mass flow of dissolved salt leaving in the concentrate",
+            )
 
     def compute(self, inputs, outputs):
         # Calculate the rated freshwater production capacity as a rate of volume.
         capacity = inputs["freshwater_capacity"] / inputs["freshwater_density"]  # m**3/h
 
-        recovery_ratio = SALINITY_PROPERTIES[self.config.salinity]["recovery_ratio"]
-        specific_energy = SALINITY_PROPERTIES[self.config.salinity]["specific_energy_consumption"]
-
-        # Freshwater possible given the available electricity and feedwater
-        water_from_electricity = inputs["electricity_in"] / specific_energy
-        water_from_feedwater = inputs["feedwater_in"] * recovery_ratio
-
-        water_out = np.minimum.reduce(
-            np.broadcast_arrays(capacity, water_from_electricity, water_from_feedwater)
-        ).clip(min=0.0)
+        point = self.config.design_point
+        if point is None:
+            properties = SALINITY_PROPERTIES[self.config.salinity]
+            recovery_ratio = properties["recovery_ratio"]
+            specific_energy = properties["specific_energy_consumption"]
+            water_from_electricity = inputs["electricity_in"] / specific_energy
+            water_from_feedwater = inputs["feedwater_in"] * recovery_ratio
+            water_out = np.minimum.reduce(
+                np.broadcast_arrays(capacity, water_from_electricity, water_from_feedwater)
+            ).clip(min=0.0)
+            outputs["electricity_consumed"] = water_out * specific_energy
+            outputs["feedwater_consumed"] = water_out / recovery_ratio
+        else:
+            permeate_mass = self.config.freshwater_capacity_kg_per_hr
+            if not (
+                np.isclose(inputs["freshwater_capacity"].item(), permeate_mass, rtol=1e-12, atol=0)
+                and np.isclose(
+                    inputs["freshwater_density"].item(),
+                    self.config.freshwater_density,
+                    rtol=1e-12,
+                    atol=0,
+                )
+            ):
+                raise ValueError(
+                    "freshwater_capacity and freshwater_density are fixed at design_point."
+                )
+            capacity = permeate_mass / self.config.freshwater_density
+            feed_mass = point.feed_mass_flow_kg_per_hr
+            feed_volume = feed_mass / point.feed_density_kg_per_m3
+            running = (inputs["electricity_in"] >= point.net_electricity_kw) & (
+                inputs["feedwater_in"] >= feed_volume
+            )
+            water_out = np.where(running, capacity, 0.0)
+            outputs["electricity_consumed"] = np.where(running, point.net_electricity_kw, 0.0)
+            outputs["feedwater_consumed"] = np.where(running, feed_volume, 0.0)
+            outputs["concentrate_mass_flow"] = np.where(running, feed_mass - permeate_mass, 0.0)
+            outputs["concentrate_salt_mass_flow"] = np.where(
+                running,
+                feed_mass * point.feed_salt_mass_fraction
+                - permeate_mass * point.permeate_salt_mass_fraction,
+                0.0,
+            )
 
         outputs["water_out"] = water_out
-        outputs["electricity_consumed"] = water_out * specific_energy
-        outputs["feedwater_consumed"] = water_out / recovery_ratio
 
         hours_per_timestep = self.dt / 3600  # rates are per hour, so scale by timestep length
         outputs["total_water_produced"] = water_out.sum() * hours_per_timestep

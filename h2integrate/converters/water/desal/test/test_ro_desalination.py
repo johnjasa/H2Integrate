@@ -47,6 +47,84 @@ def make_problem(plant_config, salinity="brackish", electricity=1e4, feedwater=1
     return prob
 
 
+@fixture
+def synthetic_design_point() -> dict:
+    """Return deliberately synthetic values, not an export from a WaterTAP solve."""
+    return {
+        "source": "Synthetic unit test point",
+        "feed_mass_flow_kg_per_hr": 4000.0,
+        "feed_density_kg_per_m3": 1025.0,
+        "net_electricity_kw": 4.0,
+        "feed_salt_mass_fraction": 0.035,
+        "permeate_salt_mass_fraction": 0.0005,
+        "max_permeate_salt_mass_fraction": 0.001,
+    }
+
+
+@pytest.mark.unit
+def test_offline_design_point(plant_config, synthetic_design_point, subtests) -> None:
+    """Exercise the full operating point, both resource limits, and shutdown."""
+    feed_volume = 4000 / 1025
+    electricity = np.zeros(N_TIMESTEPS)
+    electricity[:4] = [4.0, 5.0, 3.9, 4.0]
+    feedwater = np.zeros(N_TIMESTEPS)
+    feedwater[:5] = [feed_volume, 5.0, 5.0, feed_volume - 0.1, feed_volume]
+    prob = make_problem(
+        plant_config,
+        salinity=None,
+        electricity=electricity,
+        feedwater=feedwater,
+        freshwater_capacity_kg_per_hr=1500.0,
+        freshwater_density=1000.0,
+        design_point=synthetic_design_point,
+    )
+
+    running = np.arange(N_TIMESTEPS) < 2
+    water_out = prob.get_val("water_out", units="m**3/h")
+    feedwater_used = prob.get_val("feedwater_consumed", units="m**3/h")
+    with subtests.test("runs only at the solved point when both resources suffice"):
+        assert water_out == approx(np.where(running, 1.5, 0.0))
+        assert feedwater_used == approx(np.where(running, feed_volume, 0.0))
+        assert prob.get_val("electricity_consumed", units="kW") == approx(np.where(running, 4.0, 0))
+    with subtests.test("solution mass and salt balances close"):
+        feed_mass = feedwater_used * 1025
+        permeate_mass = water_out * 1000
+        concentrate_mass = prob.get_val("concentrate_mass_flow", units="kg/h")
+        concentrate_salt = prob.get_val("concentrate_salt_mass_flow", units="kg/h")
+        assert concentrate_mass + permeate_mass == approx(feed_mass)
+        assert concentrate_salt + permeate_mass * 0.0005 == approx(feed_mass * 0.035)
+    with subtests.test("production metrics reflect two hours of actual operation"):
+        assert prob.get_val("rated_water_production", units="m**3/h") == approx(1.5)
+        assert prob.get_val("total_water_produced", units="m**3") == approx(3.0)
+        assert prob.get_val("annual_water_produced", units="m**3/yr") == approx(3.0)
+        assert prob.get_val("capacity_factor", units="unitless") == approx(2 / N_TIMESTEPS)
+    with subtests.test("resizing a solved operating point is not supported"):
+        prob.set_val("freshwater_capacity", 1200, units="kg/h")
+        with pytest.raises(ValueError, match="are fixed at design_point"):
+            prob.run_model()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "overrides, message",
+    [
+        ({"max_permeate_salt_mass_fraction": 0.0001}, "exceeds the salt mass fraction limit"),
+        ({"feed_mass_flow_kg_per_hr": 1500.0}, "do not yield a valid concentrate"),
+        ({"net_electricity_kw": float("inf")}, "must be finite"),
+        ({"source": " "}, "source must identify the offline solve"),
+    ],
+)
+def test_invalid_offline_design_point(synthetic_design_point, overrides, message) -> None:
+    """Reject an out-of-spec or physically inconsistent point before simulation."""
+    with pytest.raises(ValueError, match=message):
+        ReverseOsmosisPerformanceModelConfig.from_dict(
+            {
+                "freshwater_capacity_kg_per_hr": 1500.0,
+                "design_point": {**synthetic_design_point, **overrides},
+            }
+        )
+
+
 @pytest.mark.unit
 def test_brackish_desal_outputs(plant_config, subtests):
     prob = make_problem(plant_config)
