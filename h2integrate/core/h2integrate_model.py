@@ -746,6 +746,7 @@ class H2IntegrateModel:
             slc_topology=slc_topology,
         )
         self.plant.add_subsystem("system_level_controller", slc_comp)
+        self.control_strategies.append(slc_comp)
 
         # --- Step 2: Connect technology outputs/inputs to the controller --
         for tech_to_commodity in slc_topology["tech_to_commodity"]:
@@ -1934,10 +1935,22 @@ class H2IntegrateModel:
             )
 
         if time_marching:
-            # Assign custom nonlinear solver to plant group to manage time-marching simulation
-            self.plant.nonlinear_solver = TimeMarchingPlantSolver(plant_config=self.plant_config)
-
             check_model_is_steppable(self.control_strategies, self.performance_models)
+            configured_options = self.plant_config.get("system_level_control", {}).get(
+                "solver_options", {}
+            )
+            solver_options = {}
+            if configured_options:
+                solver_config = SLCSolverOptionsConfig.from_dict({"iprint": 0} | configured_options)
+                if solver_config.solver_name != "gauss_seidel":
+                    raise ValueError(
+                        "Time marching requires system_level_control.solver_options.solver_name "
+                        f"to be 'gauss_seidel', not '{solver_config.solver_name}'."
+                    )
+                solver_options = solver_config.get_solver_options()
+            self.plant.nonlinear_solver = TimeMarchingPlantSolver(
+                plant_config=self.plant_config, **solver_options
+            )
             return
 
         if self.slc:
