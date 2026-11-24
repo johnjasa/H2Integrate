@@ -951,6 +951,10 @@ def test_check_model_is_steppable(subtests):
                 performance_models=[PerformanceModelSteppable(), PerformanceModelNonSteppable()],
             )
 
+    with subtests.test("Nonsteppable system-level controller"):
+        with pytest.raises(AttributeError, match="System level controller"):
+            check_model_is_steppable([], [], TechControllerNonSteppable())
+
 
 @pytest.mark.unit
 def test_check_time_marching_config(subtests):

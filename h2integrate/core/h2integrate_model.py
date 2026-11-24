@@ -35,7 +35,7 @@ from h2integrate.control.control_strategies.passthrough_controller import Passth
 from h2integrate.control.control_strategies.system_level.solver_options import (
     SLCSolverOptionsConfig,
 )
-from h2integrate.control.control_strategies.system_level.system_level_control_baseclass import (
+from h2integrate.control.control_strategies.system_level.marginal_cost_tools import (
     _get_tech_buy_price_input_name,
 )
 
@@ -746,7 +746,6 @@ class H2IntegrateModel:
             slc_topology=slc_topology,
         )
         self.plant.add_subsystem("system_level_controller", slc_comp)
-        self.control_strategies.append(slc_comp)
 
         # --- Step 2: Connect technology outputs/inputs to the controller --
         for tech_to_commodity in slc_topology["tech_to_commodity"]:
@@ -1157,10 +1156,16 @@ class H2IntegrateModel:
         # Build the controller sized to the plant's simulation horizon so its
         # vector I/O matches the performance model's time-series I/O.
         n_timesteps = int(self.plant_config["plant"]["simulation"]["n_timesteps"])
+        scale_control_variables = (
+            self.plant_config.get("system_level_control", {})
+            .get("solver_options", {})
+            .get("scale_control_variables", False)
+        )
         controller = PassthroughController(
             commodity=commodity,
             n_timesteps=n_timesteps,
             commodity_rate_units=commodity_rate_units,
+            scale_output=scale_control_variables,
         )
 
         # Promote all controller variables so:
@@ -1935,7 +1940,11 @@ class H2IntegrateModel:
             )
 
         if time_marching:
-            check_model_is_steppable(self.control_strategies, self.performance_models)
+            check_model_is_steppable(
+                control_strategies=self.control_strategies,
+                performance_models=self.performance_models,
+                system_level_controller=getattr(self.plant, "system_level_controller", None),
+            )
             configured_options = self.plant_config.get("system_level_control", {}).get(
                 "solver_options", {}
             )
